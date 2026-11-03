@@ -12,6 +12,7 @@ dependencies = ["numpy", "pandas", "scipy", "pyyaml"]
 
 [project.optional-dependencies]
 test = ["pytest", "QuantLib"]
+rapport = ["matplotlib"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

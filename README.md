@@ -15,7 +15,7 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 | 3 | IRS 6M / OIS vectorisés ; grille, netting, CSA, métriques | fait |
 | 4 | Crédit, CVA/DVA/FVA, incrémentale | fait |
 | 5 | Sensibilités CRN, SA-CCR, BA-CVA | fait |
-| 6 | Backtest PIT, convergence, étude P/Q | à faire |
+| 6 | Backtest PIT, convergence, étude P/Q | fait |
 | 7 | Streamlit, GIF ; rapport, README, LinkedIn | à faire |
 
 ## Courbes et greffe de la fiche 09 (`src/xva/market.py`)
@@ -127,6 +127,50 @@ Capital : EAD SA-CCR 16,9 M€ (add-on 7,0 M€, RC 5,1 M€), BA-CVA réduit 1,
 Avec le CSA démo (seuil 10 M€), RC = seuil + MTA = 10,5 M€ : l'EAD margée (17,6 M€) dépasse la non margée
 et elle est plafonnée. Un CSA à seuil élevé n'allège pas le capital SA-CCR.
 
+## Validation (`src/xva/validation.py`, `python -m xva.rapport`)
+
+`pip install -e .[rapport]` puis `python -m xva.rapport` (environ 1 min) : tableaux en CSV et figures dans `rapport/`.
+
+**Convergence** (portefeuille démo sans CSA) : erreur-type en `N^-0,504`, les antithétiques divisent la variance
+par 4,1 (soit 4 fois moins de chemins). 10 000 chemins : CVA 653,0 k€ (ET 3,1), 1,4 s ; 50 000 : 655,5 k€ (ET 1,4), 6,6 s.
+
+![Convergence](rapport/figures/convergence.png)
+
+**Mesure P contre Q** (mêmes tirages, 10 000 chemins, écart à la CVA sous Q) :
+
+| Cas | σ | CVA | Écart |
+|---|---|---|---|
+| Q, σ implicite (référence) | 0,84 % | 653,0 k€ | |
+| P, σ historique (1 an BCE) | 0,58 % | 499,5 k€ | −23,5 % |
+| Vols +20 % / −20 % | 1,01 % / 0,67 % | 755,2 / 552,0 k€ | +15,7 % / −15,5 % |
+| a = 0,01 / 0,05 (σ recalibré) | 0,76 % / 0,92 % | 649,8 / 655,9 k€ | −0,5 % / +0,4 % |
+| Spreads ±25 % | 0,84 % | 800,8 / 499,3 k€ | +22,6 % / −23,5 % |
+
+Une CVA calculée sous P serait inférieure d'un quart : la prime de vol implicite pèse autant qu'un choc de 25 %
+des spreads. Le retour à la moyenne compte peu une fois σ recalibré sur les mêmes swaptions.
+
+**Backtest point-in-time des expositions sous P** : courbes BCE AAA quotidiennes 2004-2026 (5 665 jours, API
+gratuite de la BCE). À chaque date, σ(P) calibré sur l'année précédente (pas de look-ahead), loi de la valeur
+à l'horizon simulée depuis la courbe du jour, PIT = rang de la valeur réalisée. Fenêtres sans chevauchement.
+Trois netting sets démarrant à l'horizon : payeur 5 ans, receveur 10 ans, pentification (payeur 10 ans contre
+receveur 2 ans de DV01 voisin). Mono-courbe AAA, seul historique long et gratuit.
+
+| Horizon | Fenêtres | Puissance KS (vol vraie ×1,25) | KS payeur 5Y | KS receveur 10Y | KS pentification |
+|---|---|---|---|---|---|
+| 1 mois | 257 | 55 % | 0,108 (p 0,005) | 0,127 (p < 0,001) | 0,444 (p < 0,001) |
+| 3 mois | 85 | 21 %, indicatif | 0,162 (p 0,02) | 0,153 (p 0,03) | 0,462 (p < 0,001) |
+| 1 an | 21 | 10 %, indicatif | 0,268 (p 0,08) | 0,244 (p 0,14) | 0,416 (p 0,001) |
+
+![PIT](rapport/figures/backtest_pit.png)
+
+Lecture : sur les positions directionnelles, les PIT s'accumulent aux deux bords (à 1 mois, 6 à 10 % des
+réalisations sous le quantile 2,5 % au lieu de 2,5 %) : les queues historiques sont plus épaisses que la
+gaussienne HW1F et σ(P) sur un an glissant réagit en retard aux changements de régime (2008, 2022).
+Sur la pentification, presque toutes les réalisations tombent hors de la loi simulée : avec un seul facteur,
+2 ans et 10 ans bougent ensemble et le modèle ne voit quasiment aucun risque sur une position neutre en DV01.
+C'est la limite connue du HW1F ; un portefeuille exposé à la pente demanderait un modèle à deux facteurs.
+À 3 mois et 1 an, la puissance est trop faible pour conclure ; ces lignes sont indicatives.
+
 ## Tests
 
 ```bash
@@ -134,7 +178,7 @@ pip install -e .[test]
 pytest
 ```
 
-38 tests, environ 30 s :
+41 tests, environ 45 s :
 - HW1F : martingale `E[D] = P(0, t)`, moments de `x` et `∫x`, cohérence ZC futur, option sur ZC et
   swaption Jamshidian contre QuantLib 1.44, Jamshidian contre Monte Carlo en multi-courbes, parité,
   calibrations Q et P retrouvant un σ connu, adaptateur de la fiche 09.
@@ -150,3 +194,5 @@ pytest
 - Risque : triangles de somme 1 ; somme des deltas par pilier = parallèle (< 5 %) ; signes de delta et vega
   d'un payeur ; somme des CS01 = parallèle ; SA-CCR à la main (un trade, deux buckets avec multiplicateur, margé,
   plafond) ; BA-CVA réduit à la main (une et deux contreparties).
+- Validation : PIT uniformes (KS non rejeté) quand les courbes réalisées sont tirées du modèle lui-même ;
+  puissance du KS au niveau nominal sans écart et croissante avec le nombre de fenêtres ; pente de convergence −0,5.

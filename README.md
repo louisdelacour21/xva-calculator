@@ -12,7 +12,7 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 | 1 | Dépôt, interface de courbe, HW1F, simulation exacte | fait (courbes plates en attendant la 09) |
 | 2 | Jamshidian, calibration Q, comparaison P | fait |
 | — | Greffe des courbes de la fiche 09 | en attente de la 09 |
-| 3 | IRS 6M / OIS vectorisés ; grille, netting, CSA, métriques | à faire |
+| 3 | IRS 6M / OIS vectorisés ; grille, netting, CSA, métriques | fait |
 | 4 | Crédit, CVA/DVA/FVA, incrémentale | à faire |
 | 5 | Sensibilités CRN, SA-CCR, BA-CVA | à faire |
 | 6 | Backtest PIT, convergence, étude P/Q | à faire |
@@ -46,6 +46,32 @@ Un objet `Marche` porte deux courbes, `estr` (actualisation) et `euribor6m` (pro
 Premiers chiffres (courbes plates, vols synthétiques) : σ(Q) = 0,84 %, écart de vol max 3,6 bp ;
 σ(P) = 0,58 %, soit **-31 %** : une CVA calibrée sur l'historique serait sous-estimée d'environ autant.
 
+## Produits (`src/xva/products.py`)
+
+- IRS EURIBOR 6M (base 6M/€STR déterministe) et OIS €STR, payeur ou receveur, démarrage immédiat ou à terme.
+- `valeur(trades, modèle, marché, t, x_t, D_t, état)` : l'interface `value(t, state)` où se branchera
+  le pricer neuronal. Chaque date = une matrice de ZC (chemins × échéances) × une matrice de poids
+  (échéances × trades) ; seul le coupon en cours, fixé sur le chemin, est ajouté trade par trade.
+- `cube_mtm` : cube MtM chemins × dates × trades, conservé pour la CVA incrémentale.
+- Correction de la fiche : la jambe €STR en cours vaut `exp(∫_s^t r) − P(t, e)`, pas `exp(∫r)·P(t, e) − P(t, e)`
+  (erreur détectée par le test de martingale).
+- Pas encore de trade déjà vivant (fixings passés) : à ajouter avec les fixings de la 09.
+
+## Exposition (`src/xva/exposure.py`)
+
+- Grille : mensuelle ∪ dates de flux ∪ nœuds `t − MPoR`.
+- Collatéral classique `C(t) = max(V(t−M) − H_C, 0) − max(−V(t−M) − H_B, 0)`, MTA ajouté aux seuils
+  (approximation écrite), flux pendant la MPoR ignorés.
+- EE, NEE, PFE 97,5 %, EE* et NEE* actualisés avec erreurs-types, EEPE (EE effective sur un an).
+
+Portefeuille démo (`portfolios/demo.yaml`, 7 swaps fictifs, 435 M€ de nominal, σ calibré Q, 10 000 chemins,
+240 dates, cube en 4 s sur le PC) :
+
+| | EEPE | EE max | PFE max |
+|---|---|---|---|
+| Sans CSA | 6,2 M€ | 9,3 M€ | 36,8 M€ |
+| CSA (H = 10 M€, MTA 0,5 M€, MPoR 10 j) | 5,3 M€ | 5,4 M€ | 13,9 M€ |
+
 ## Tests
 
 ```bash
@@ -53,6 +79,12 @@ pip install -e .[test]
 pytest
 ```
 
-11 tests : martingale `E[D] = P(0, t)`, moments de `x` et `∫x`, cohérence ZC futur, option sur ZC et
-swaption Jamshidian contre QuantLib 1.44, Jamshidian contre Monte Carlo en multi-courbes, parité
-payeuse/receveuse, calibrations Q et P retrouvant un σ connu, adaptateur de la fiche 09.
+23 tests, environ 20 s :
+- HW1F : martingale `E[D] = P(0, t)`, moments de `x` et `∫x`, cohérence ZC futur, option sur ZC et
+  swaption Jamshidian contre QuantLib 1.44, Jamshidian contre Monte Carlo en multi-courbes, parité,
+  calibrations Q et P retrouvant un σ connu, adaptateur de la fiche 09.
+- Produits : IRS multi-courbes contre QuantLib (< 1e-10 du nominal), OIS contre QuantLib (1e-8, capitalisation
+  TARGET jour par jour) ; `E[D·V(t)]` = valeur des flux restants, y compris en milieu de période ;
+  EE* d'un payeur seul = swaption sur le swap résiduel (± 3 ET) ; PFE au quantile fermée dans l'IC binomial.
+- Exposition : netting sous-additif, swaps miroirs → 0, seuil infini = sans collatéral, collatéral parfait
+  à MPoR nulle → 0, EE croissante en MPoR et loi √MPoR (± 15 % hors dates de flux), démo avec et sans CSA.

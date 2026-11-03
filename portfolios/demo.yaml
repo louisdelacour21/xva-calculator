@@ -1,0 +1,12 @@
+# Netting set SYNTHÉTIQUE d'une contrepartie corporate fictive, vu de la banque.
+# Strikes hors marché pour des MtM non nuls ; trades démarrant aujourd'hui ou à terme (pas de fixing passé en v1).
+contrepartie: Contrepartie A (fictive, BBB)
+csa: {H_C: 10000000, H_B: 10000000, MTA: 500000, mpor_jours: 10}
+trades:
+  - {nom: IRS-01, type: irs, sens: payeur,   nominal: 100000000, K: 0.0230, debut: 0, tenor: 10}
+  - {nom: IRS-02, type: irs, sens: receveur, nominal: 50000000,  K: 0.0275, debut: 0, tenor: 5}
+  - {nom: IRS-03, type: irs, sens: payeur,   nominal: 75000000,  K: 0.0260, debut: 1, tenor: 7}
+  - {nom: IRS-04, type: irs, sens: receveur, nominal: 40000000,  K: 0.0300, debut: 0, tenor: 3}
+  - {nom: IRS-05, type: irs, sens: payeur,   nominal: 30000000,  K: 0.0245, debut: 2, tenor: 8}
+  - {nom: OIS-01, type: ois, sens: receveur, nominal: 80000000,  K: 0.0240, debut: 0, tenor: 2}
+  - {nom: OIS-02, type: ois, sens: payeur,   nominal: 60000000,  K: 0.0255, debut: 0, tenor: 6}

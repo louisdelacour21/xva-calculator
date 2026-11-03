@@ -13,7 +13,7 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 | 2 | Jamshidian, calibration Q, comparaison P | fait |
 | — | Greffe des courbes de la fiche 09 | en attente de la 09 |
 | 3 | IRS 6M / OIS vectorisés ; grille, netting, CSA, métriques | fait |
-| 4 | Crédit, CVA/DVA/FVA, incrémentale | à faire |
+| 4 | Crédit, CVA/DVA/FVA, incrémentale | fait |
 | 5 | Sensibilités CRN, SA-CCR, BA-CVA | à faire |
 | 6 | Backtest PIT, convergence, étude P/Q | à faire |
 | 7 | Streamlit, GIF ; rapport, README, LinkedIn | à faire |
@@ -72,6 +72,32 @@ Portefeuille démo (`portfolios/demo.yaml`, 7 swaps fictifs, 435 M€ de nominal
 | Sans CSA | 6,2 M€ | 9,3 M€ | 36,8 M€ |
 | CSA (H = 10 M€, MTA 0,5 M€, MPoR 10 j) | 5,3 M€ | 5,4 M€ | 13,9 M€ |
 
+## Crédit et XVA (`src/xva/xva.py`)
+
+- Survie : λ constante par morceaux bootstrapée sur les spreads CDS 1, 3, 5, 7, 10 ans, R = 40 %,
+  convention MidPoint (défaut au milieu de la période, coupon couru payé au défaut), CDS trimestriels réguliers
+  (pas de dates IMM). Spreads **synthétiques** dans `market/spreads.yaml` (contrepartie BBB, banque A).
+- CVA, DVA, FCA, FBA selon les formules de la fiche, EE* au milieu de chaque intervalle par trapèze.
+  Financement : `ℓ = max(s_F − (1 − R_B)·λ_B, 0)`, donc la FBA ne recompte pas la DVA.
+- Erreurs-types calculées par paire antithétique.
+- `pre_trade` : ΔXVA d'un nouveau trade sur les mêmes chemins, seul son MtM est calculé.
+- `allocation_euler` : CVA marginale par trade (sans collatéral), somme exacte = CVA.
+
+```bash
+python -m xva.demo
+```
+
+Portefeuille démo, σ calibré Q, 10 000 chemins (k€, erreur-type entre parenthèses) :
+
+| | CVA | DVA | FCA | FBA | V ajustée (V0 = 5 090) |
+|---|---|---|---|---|---|
+| Sans CSA | 659,7 (3,2) | 227,8 (2,4) | 81,2 (0,3) | 34,2 (0,4) | 4 609,1 |
+| CSA | 446,3 (0,7) | 159,5 (1,1) | 57,0 (< 0,1) | 23,5 (0,2) | 4 767,7 |
+
+Le CSA retire 32 % de la CVA. Allocation d'Euler (sans CSA) : IRS-01 394 k€, IRS-03 126 k€, IRS-05 103 k€.
+Pré-trade d'un IRS payeur 50 M€ 10 ans à 2,60 % : ΔCVA = 146,5 k€ (ET 0,9) sans CSA, 28,0 k€ (ET 0,2) avec CSA,
+en 1,4 à 1,6 s.
+
 ## Tests
 
 ```bash
@@ -79,7 +105,7 @@ pip install -e .[test]
 pytest
 ```
 
-23 tests, environ 20 s :
+30 tests, environ 30 s :
 - HW1F : martingale `E[D] = P(0, t)`, moments de `x` et `∫x`, cohérence ZC futur, option sur ZC et
   swaption Jamshidian contre QuantLib 1.44, Jamshidian contre Monte Carlo en multi-courbes, parité,
   calibrations Q et P retrouvant un σ connu, adaptateur de la fiche 09.
@@ -88,3 +114,7 @@ pytest
   EE* d'un payeur seul = swaption sur le swap résiduel (± 3 ET) ; PFE au quantile fermée dans l'IC binomial.
 - Exposition : netting sous-additif, swaps miroirs → 0, seuil infini = sans collatéral, collatéral parfait
   à MPoR nulle → 0, EE croissante en MPoR et loi √MPoR (± 15 % hors dates de flux), démo avec et sans CSA.
+- XVA : le bootstrap reprice les spreads ; spread au pair contre QuantLib `MidPointCdsEngine` (< 0,1 bp ;
+  `IsdaCdsEngine` de la fiche remplacé par MidPoint, la convention du moteur) ; CVA d'un swap seul = somme
+  de swaptions fermées (< 2 % et 3 ET) ; somme des allocations d'Euler = CVA ; pré-trade = recalcul complet ;
+  CVA de la banque = DVA de la contrepartie ; ℓ = 0 → pas de FVA.

@@ -1,0 +1,15 @@
+# Spreads CDS au pair (bp) par pilier en années, recouvrement R, et financement de la banque.
+# SYNTHÉTIQUE : ordres de grandeur par notation (contrepartie BBB, banque A), dans l'esprit des OAS
+# ICE BofA publiées sur FRED (BAMLC0A4CBBB pour le BBB) ; séries ICE non redistribuées ici.
+# Base CDS-obligation ignorée. Impact : CVA publiée à ±25 % de spread (étape 6).
+source: synthetique
+date: 2026-11-03
+contrepartie:
+  nom: Contrepartie A (fictive, BBB)
+  R: 0.40
+  spreads_bp: {1: 90, 3: 110, 5: 130, 7: 145, 10: 160}
+banque:
+  nom: Banque (fictive, A)
+  R: 0.40
+  spreads_bp: {1: 45, 3: 55, 5: 65, 7: 75, 10: 85}
+  financement_bp: 90  # spread de financement non garanti s_F, ℓ = max(s_F - (1-R)·λ, 0)

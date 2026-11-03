@@ -31,13 +31,14 @@ def exposition(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
     k = np.array([indice(t, u) for u in base])
     Vb, Db = V[:, k], D[:, k]
     if csa is None:
-        C = np.zeros_like(Vb)
+        C, C0 = np.zeros_like(Vb), 0.0
     else:
         # avant la première MPoR, le collatéral reflète la valeur initiale
         lag = np.array([np.full(len(V), V0) if u - csa["mpor"] <= 1e-12 else V[:, indice(t, u - csa["mpor"])]
                         for u in base]).T
         hc, hb = csa["H_C"] + csa["MTA"], csa["H_B"] + csa["MTA"]
         C = np.maximum(lag - hc, 0) - np.maximum(-lag - hb, 0)
+        C0 = max(V0 - hc, 0) - max(-V0 - hb, 0)
     E, N = np.maximum(Vb - C, 0), np.maximum(C - Vb, 0)
     n = len(V)
     ee = E.mean(0)
@@ -50,4 +51,5 @@ def exposition(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
         "NEE*": (Db * N).mean(0), "ET_NEE*": (Db * N).std(0) / np.sqrt(n),
         "EEPE": float(np.sum(eee[un_an] * dt[un_an]) / np.sum(dt[un_an])),
         "E": E, "N": N, "D": Db,  # conservés pour la CVA incrémentale et l'allocation (étape 4)
+        "E0": max(V0 - C0, 0.0), "N0": max(C0 - V0, 0.0),
     }

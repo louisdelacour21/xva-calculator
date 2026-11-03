@@ -16,7 +16,23 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 | 4 | Crédit, CVA/DVA/FVA, incrémentale | fait |
 | 5 | Sensibilités CRN, SA-CCR, BA-CVA | fait |
 | 6 | Backtest PIT, convergence, étude P/Q | fait |
-| 7 | Streamlit, GIF ; rapport, README, LinkedIn | à faire |
+| 7 | Streamlit, GIF ; rapport, README, LinkedIn | fait (en local ; mise en ligne à faire) |
+
+## Démo (`app.py`)
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+XVA du netting set démo, CSA réglable (seuil, MTA, MPoR), coût d'un nouveau swap en 1 à 3 s sur les chemins déjà
+simulés, profils EE/PFE avec et sans CSA, allocation d'Euler, proxys affichés avec leur impact chiffré.
+Calcul en direct (environ 2 s au démarrage, puis mis en cache) plutôt que des cubes précalculés.
+
+![Pré-trade](rapport/figures/pre_trade.gif)
+
+Rapport de validation : [`rapport/validation.pdf`](rapport/validation.pdf) (auto-revue, limites, recommandations ;
+relecture par un tiers à faire).
 
 ## Courbes et greffe de la fiche 09 (`src/xva/market.py`)
 
@@ -136,6 +152,11 @@ par 4,1 (soit 4 fois moins de chemins). 10 000 chemins : CVA 653,0 k€ (ET 3,1)
 
 ![Convergence](rapport/figures/convergence.png)
 
+**EE* contre swaption fermée** (payeur seul 10 M€ 5 ans au pair, 40 000 chemins) : écart max 0,46 bp du nominal
+aux dates de coupon fixe, sous l'erreur-type (0,87 bp).
+
+![EE contre swaption](rapport/figures/ee_swaption.png)
+
 **Mesure P contre Q** (mêmes tirages, 10 000 chemins, écart à la CVA sous Q) :
 
 | Cas | σ | CVA | Écart |
@@ -178,7 +199,7 @@ pip install -e .[test]
 pytest
 ```
 
-41 tests, environ 45 s :
+42 tests, environ 1 min :
 - HW1F : martingale `E[D] = P(0, t)`, moments de `x` et `∫x`, cohérence ZC futur, option sur ZC et
   swaption Jamshidian contre QuantLib 1.44, Jamshidian contre Monte Carlo en multi-courbes, parité,
   calibrations Q et P retrouvant un σ connu, adaptateur de la fiche 09.
@@ -196,3 +217,4 @@ pytest
   plafond) ; BA-CVA réduit à la main (une et deux contreparties).
 - Validation : PIT uniformes (KS non rejeté) quand les courbes réalisées sont tirées du modèle lui-même ;
   puissance du KS au niveau nominal sans écart et croissante avec le nombre de fenêtres ; pente de convergence −0,5.
+- Appli : démarre sans erreur, avec et sans CSA (`streamlit.testing`).

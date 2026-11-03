@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Calculateur XVA : rapport de validation</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm; }
+  body { font: 10.5pt/1.45 "Segoe UI", Arial, sans-serif; color: #1a1a1a; max-width: 180mm; margin: auto; }
+  h1 { font-size: 19pt; margin: 0 0 2pt; }
+  h2 { font-size: 13pt; margin: 16pt 0 5pt; border-bottom: 1px solid #ccc; padding-bottom: 2pt; break-after: avoid; }
+  .meta { color: #555; margin-bottom: 10pt; }
+  table { border-collapse: collapse; width: 100%; margin: 5pt 0 8pt; font-size: 9.5pt; break-inside: avoid; }
+  th, td { border: 1px solid #ccc; padding: 3pt 5pt; text-align: left; }
+  th { background: #f2f2f2; }
+  td.n { text-align: right; white-space: nowrap; }
+  figure { margin: 6pt 0 10pt; break-inside: avoid; }
+  figure img { width: 100%; }
+  figcaption { font-size: 9pt; color: #555; }
+  .ok { color: #1b7f3b; font-weight: 600; } .ko { color: #b2182b; font-weight: 600; } .moy { color: #a35d00; font-weight: 600; }
+  .note { background: #fff7e0; border-left: 3px solid #e0a800; padding: 5pt 8pt; }
+  code { font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<h1>Calculateur XVA : rapport de validation</h1>
+<div class="meta">Swaps EUR, Hull-White 1F, Monte Carlo · Louis Delacour · novembre 2026 · version 0.0.1</div>
+
+<p class="note">Auto-revue par l'auteur. Une relecture par un tiers reste à faire avant tout usage au-delà de la
+démonstration. Toutes les données de marché sont synthétiques ou publiques (BCE) ; la contrepartie est fictive.</p>
+
+<h2>1. Synthèse</h2>
+<table>
+  <tr><th>Contrôle</th><th>Résultat</th><th>Verdict</th></tr>
+  <tr><td>Prix (IRS, OIS, swaptions, CDS) contre QuantLib 1.44</td><td>écarts &lt; 1e-8 du nominal ; CDS &lt; 0,1 bp</td><td class="ok">validé</td></tr>
+  <tr><td>EE* d'un swap seul contre swaption fermée (Jamshidian)</td><td>écart max 0,46 bp du nominal, sous l'erreur-type (0,87 bp)</td><td class="ok">validé</td></tr>
+  <tr><td>Convergence Monte Carlo</td><td>erreur-type en N<sup>−0,504</sup>, gain antithétique ×4,1</td><td class="ok">validé</td></tr>
+  <tr><td>Sensibilités CRN</td><td>somme des deltas par pilier = parallèle à 1 € près, ET &lt; 1 %</td><td class="ok">validé</td></tr>
+  <tr><td>Backtest point-in-time, positions directionnelles</td><td>queues trop épaisses à 1 mois (KS p ≤ 0,005)</td><td class="moy">limite connue</td></tr>
+  <tr><td>Backtest point-in-time, pentification</td><td>rejet net à tous les horizons</td><td class="ko">hors domaine</td></tr>
+  <tr><td>Sensibilité aux paramètres non observables</td><td>vols ±20 % → CVA ±16 % ; spreads ±25 % → CVA ±23 %</td><td class="moy">proxys à remplacer</td></tr>
+</table>
+<p>Le moteur est correct pour son usage visé : CVA/DVA/FVA et pré-trade d'un netting set de swaps EUR
+<em>directionnels</em>. Il n'est pas adapté à un portefeuille dont le risque principal est la pente de la courbe.</p>
+
+<h2>2. Périmètre et modèle</h2>
+<ul>
+  <li><b>Produits</b> : IRS EURIBOR 6M (base 6M/€STR déterministe) et OIS €STR, payeur ou receveur, démarrage immédiat ou à terme.</li>
+  <li><b>Modèle</b> : Hull-White 1F, simulation exacte jointe de (x, ∫x), actualisation sans biais (E[D] = P(0, t)), variables antithétiques.
+    Calibration Q : a = 0,03, σ ajusté aux swaptions ATM co-terminales 10 ans (σ = 0,84 %).</li>
+  <li><b>Exposition</b> : grille mensuelle ∪ dates de flux ∪ nœuds t − MPoR ; netting ; CSA à seuils, MTA et MPoR ; EE, PFE 97,5 %, EEPE.</li>
+  <li><b>Crédit</b> : λ constante par morceaux bootstrapée sur des CDS synthétiques (contrepartie BBB, banque A), R = 40 %.</li>
+  <li><b>Portefeuille démo</b> : 7 swaps fictifs, 435 M€ de nominal, 10 000 chemins, 240 dates.</li>
+</ul>
+<table>
+  <tr><th>Portefeuille démo (k€, ET)</th><th>CVA</th><th>DVA</th><th>FCA</th><th>FBA</th></tr>
+  <tr><td>Sans CSA</td><td class="n">659,7 (3,2)</td><td class="n">227,8 (2,4)</td><td class="n">81,2 (0,3)</td><td class="n">34,2 (0,4)</td></tr>
+  <tr><td>CSA (seuil 10 M€, MTA 0,5 M€, MPoR 10 j)</td><td class="n">446,3 (0,7)</td><td class="n">159,5 (1,1)</td><td class="n">57,0 (&lt; 0,1)</td><td class="n">23,5 (0,2)</td></tr>
+</table>
+<p>Le CSA retire 32 % de la CVA. Pré-trade (ΔXVA d'un nouveau swap sur les chemins déjà simulés) : 1 à 3 s.</p>
+
+<h2>3. Tests de prix et d'exposition</h2>
+<p>41 tests automatisés (pytest, environ 45 s), dont : martingale E[D] = P(0, t) ; option sur ZC et swaption Jamshidian
+contre QuantLib ; IRS et OIS contre QuantLib ; E[D·V(t)] égal à la valeur des flux restants, y compris en milieu de période ;
+PFE égale au quantile fermé dans l'intervalle binomial ; netting sous-additif ; collatéral parfait à MPoR nulle → 0 ;
+somme des allocations d'Euler = CVA ; pré-trade = recalcul complet ; CVA de la banque = DVA de la contrepartie.</p>
+<figure>
+  <img src="figures/ee_swaption.png" alt="EE* simulée d'un payeur seul et swaptions fermées aux dates de coupon fixe">
+  <figcaption>Sans collatéral, EE*(t) d'un swap payeur est la valeur d'une swaption payeuse d'échéance t sur le swap résiduel.
+  Écart max 0,46 bp du nominal à 40 000 chemins (ET 0,87 bp). Les dents de scie suivent les flux : flottant reçu chaque semestre, fixe payé chaque année.</figcaption>
+</figure>
+<p><b>Erreur trouvée et corrigée</b> : la formule de la jambe €STR en cours donnée dans la fiche projet
+(exp(∫r)·P(t, e) − P(t, e)) est fausse ; la bonne valeur est exp(∫<sub>s</sub><sup>t</sup> r) − P(t, e). Le test de martingale l'a détectée.</p>
+
+<h2>4. Convergence</h2>
+<figure>
+  <img src="figures/convergence.png" alt="CVA et erreur-type en fonction du nombre de chemins">
+  <figcaption>Portefeuille démo sans CSA. 10 000 chemins : CVA 653,0 k€ (ET 3,1), 1,4 s ; 50 000 : 655,5 k€ (ET 1,4), 6,6 s.</figcaption>
+</figure>
+
+<h2>5. Mesure P contre Q et paramètres non observables</h2>
+<figure>
+  <img src="figures/etude_pq.png" alt="Écarts de CVA selon la mesure, les vols, le retour à la moyenne et les spreads">
+  <figcaption>Mêmes tirages, 10 000 chemins. σ historique (BCE, un an) : CVA −23,5 %. Le retour à la moyenne pèse ±0,5 % une fois σ recalibré.</figcaption>
+</figure>
+<p>Une CVA calculée sous P serait inférieure d'un quart : la prime de vol implicite pèse autant qu'un choc de 25 % des spreads.
+Les deux entrées les plus influentes (vols de swaptions et spreads CDS) sont aujourd'hui synthétiques.</p>
+
+<h2>6. Backtest point-in-time des expositions</h2>
+<p>Courbes BCE AAA quotidiennes 2004-2026 (5 665 jours). À chaque date, σ(P) est calibré sur l'année précédente
+(pas de look-ahead) ; la loi de la valeur à l'horizon est simulée depuis la courbe du jour et la valeur réalisée y est classée (PIT).
+Fenêtres sans chevauchement. Test de Kolmogorov-Smirnov sur l'uniformité.</p>
+<table>
+  <tr><th>Horizon</th><th>Fenêtres</th><th>Puissance KS</th><th>Payeur 5Y</th><th>Receveur 10Y</th><th>Pentification</th></tr>
+  <tr><td>1 mois</td><td class="n">257</td><td class="n">55 %</td><td class="n">p 0,005</td><td class="n">p &lt; 0,001</td><td class="n">p &lt; 0,001</td></tr>
+  <tr><td>3 mois</td><td class="n">85</td><td class="n">21 %</td><td class="n">p 0,02</td><td class="n">p 0,03</td><td class="n">p &lt; 0,001</td></tr>
+  <tr><td>1 an</td><td class="n">21</td><td class="n">10 %</td><td class="n">p 0,08</td><td class="n">p 0,14</td><td class="n">p 0,001</td></tr>
+</table>
+<figure>
+  <img src="figures/backtest_pit.png" alt="Histogrammes des PIT par horizon et par netting set">
+  <figcaption>Puissance calculée contre une vol vraie 25 % plus forte. À 3 mois et 1 an, la puissance est trop faible pour conclure.</figcaption>
+</figure>
+<p>Positions directionnelles : les PIT s'accumulent aux deux bords (6 à 10 % des réalisations sous le quantile 2,5 % à 1 mois).
+Les queues historiques sont plus épaisses que la gaussienne et σ(P) sur un an glissant réagit en retard (2008, 2022).
+Pentification : avec un seul facteur, 2 ans et 10 ans bougent ensemble ; le modèle ne voit presque aucun risque sur une position neutre en DV01.</p>
+
+<h2>7. Limites</h2>
+<table>
+  <tr><th>Limite</th><th>Impact mesuré ou attendu</th></tr>
+  <tr><td>Courbes plates €STR / EURIBOR 6M (en attendant le projet de courbes)</td><td>profils lissés ; pas de pente initiale</td></tr>
+  <tr><td>Vols de swaptions synthétiques</td><td>±20 % → CVA +15,7 % / −15,5 %</td></tr>
+  <tr><td>Spreads CDS synthétiques</td><td>±25 % → CVA +22,6 % / −23,5 %</td></tr>
+  <tr><td>Un facteur</td><td>risque de pente invisible (backtest rejeté)</td></tr>
+  <tr><td>Queues gaussiennes</td><td>PFE et EE sous-estimées en régime de stress</td></tr>
+  <tr><td>MTA ajouté au seuil, flux pendant la MPoR ignorés</td><td>approximation écrite ; effet de second ordre sur l'EE</td></tr>
+  <tr><td>Pas de wrong-way risk, de trade déjà vivant, d'échéancier TARGET2</td><td>non quantifié</td></tr>
+  <tr><td>BA-CVA : poids de risque recopiés de mémoire</td><td>à vérifier contre MAR50.16 avant tout usage réglementaire</td></tr>
+</table>
+
+<h2>8. Recommandations</h2>
+<ol>
+  <li>Greffer les courbes bootstrapées €STR et EURIBOR 6M et les dates TARGET2 (interface déjà en place).</li>
+  <li>Remplacer les vols et les spreads synthétiques par des données de marché ; tant qu'ils restent synthétiques, publier les CVA avec les fourchettes de la section 5.</li>
+  <li>Passer à un modèle à deux facteurs (G2++) avant d'appliquer le moteur à un portefeuille exposé à la pente.</li>
+  <li>Calibrer σ(P) sur une fenêtre plus courte ou pondérée, ou ajouter un facteur de queue, pour les usages de mesure P (PFE de limites).</li>
+  <li>Ajouter le wrong-way risk (corrélation taux-crédit) et les flux pendant la MPoR.</li>
+  <li>Faire relire ce rapport et le code par un tiers indépendant.</li>
+</ol>
+
+<h2>Annexe : démonstration</h2>
+<figure>
+  <img src="figures/app_profils.png" alt="Capture de l'application : profils EE et PFE avec et sans CSA, allocation d'Euler">
+  <figcaption>Application Streamlit : profils EE et PFE avec et sans CSA, allocation d'Euler de la CVA, proxys affichés avec leur impact.</figcaption>
+</figure>
+<p>Reproduire : <code>pip install -e .[test,rapport]</code>, <code>pytest</code>, <code>python -m xva.rapport</code>, <code>streamlit run app.py</code>.</p>
+
+</body>
+</html>

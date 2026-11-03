@@ -10,9 +10,10 @@ import numpy as np
 import pandas as pd
 
 from .demo import PORTEFEUILLE
-from .hw1f import calibrer_p, calibrer_q
+from .exposure import grille
+from .hw1f import calibrer_p, calibrer_q, swap_coupons, taux_swap
 from .market import historique_bce, marche_test, vols_swaptions
-from .products import charger_portefeuille
+from .products import charger_portefeuille, cube_mtm, indice, swap
 from .validation import backtest_pit, convergence, etude_pq, historique_complet
 from .xva import charger_credit
 
@@ -71,7 +72,36 @@ def main():
     fig.suptitle("PIT des valeurs réalisées dans la loi simulée (uniforme si le modèle est juste)")
     fig.tight_layout()
     fig.savefig(SORTIE / "figures" / "backtest_pit.png", dpi=130)
+    ee_swaption(modele, marche)
     print(f"\nFigures dans {SORTIE / 'figures'}")
+
+
+def ee_swaption(modele, marche, nominal=10e6, tenor=5, n=40_000):
+    """EE* d'un payeur seul au pair contre la swaption payeuse fermée (Jamshidian) aux dates de coupon fixe."""
+    K = taux_swap(0.0, tenor, marche.estr, marche.euribor6m)[0]
+    tr = [swap("P", "irs", 1, nominal, K, 0.0, tenor)]
+    _, t = grille(tr, mpors=())
+    sim = modele.simuler(t, n, graine=0)
+    ee = sim["D"] * np.maximum(cube_mtm(tr, modele, marche, sim)[..., 0], 0)
+    u = np.arange(1, tenor)
+    sw = []
+    for v in u:
+        n1, temps, coupons = swap_coupons(v, tenor - v, K, marche.estr, marche.euribor6m)  # nominal unitaire
+        sw.append(nominal * modele.jamshidian(v, temps, coupons, n1))
+    k = [indice(t, v) for v in u]
+    ecart = (ee.mean(0)[k] - sw) / nominal * 1e4
+    et = ee.std(0)[k] / np.sqrt(n) / nominal * 1e4
+    pd.DataFrame({"t": u, "EE*": ee.mean(0)[k], "swaption": sw, "écart (bp)": ecart, "ET (bp)": et}) \
+        .to_csv(SORTIE / "ee_swaption.csv", index=False)
+    print(f"\nEE* contre swaption ({n:,} chemins) : écart max {np.abs(ecart).max():.2f} bp du nominal, "
+          f"ET {et.max():.2f} bp")
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(t, ee.mean(0) / 1e3, label="EE* simulée (Monte Carlo)")
+    ax.plot(u, np.array(sw) / 1e3, "o", c="#b2182b", label="swaption payeuse fermée (Jamshidian)")
+    ax.set(xlabel="années", ylabel="k€", title=f"Payeur seul {nominal / 1e6:.0f} M€ {tenor} ans au pair, sans CSA")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(SORTIE / "figures" / "ee_swaption.png", dpi=130)
 
 
 if __name__ == "__main__":

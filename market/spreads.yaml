@@ -6,6 +6,8 @@ source: synthetique
 date: 2026-11-03
 contrepartie:
   nom: Contrepartie A (fictive, BBB)
+  secteur: industrie  # BA-CVA : bucket MAR50.16 (BBB = investment grade)
+  qualite: IG
   R: 0.40
   spreads_bp: {1: 90, 3: 110, 5: 130, 7: 145, 10: 160}
 banque:

@@ -24,6 +24,7 @@ class Survie:
     piliers: np.ndarray
     lam: np.ndarray
     R: float = 0.4
+    spreads: dict | None = None  # cotations d'origine, pour re-bootstrapper après un choc
 
     def __call__(self, t):
         t = np.asarray(t, dtype=float)
@@ -63,7 +64,7 @@ def bootstrap(spreads: dict, P: Courbe, R: float = 0.4, freq: int = 4) -> Survie
             lam[i] = l
             return spread_cds(Survie(piliers[: i + 1], lam[: i + 1].copy(), R), P, echeancier_cds(T, freq)) - spreads[T]
         lam[i] = brentq(f, 0.0, 5.0, xtol=1e-15)
-    return Survie(piliers, lam, R)
+    return Survie(piliers, lam, R, dict(spreads))
 
 
 @dataclass

@@ -14,7 +14,7 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 | — | Greffe des courbes de la fiche 09 | en attente de la 09 |
 | 3 | IRS 6M / OIS vectorisés ; grille, netting, CSA, métriques | fait |
 | 4 | Crédit, CVA/DVA/FVA, incrémentale | fait |
-| 5 | Sensibilités CRN, SA-CCR, BA-CVA | à faire |
+| 5 | Sensibilités CRN, SA-CCR, BA-CVA | fait |
 | 6 | Backtest PIT, convergence, étude P/Q | à faire |
 | 7 | Streamlit, GIF ; rapport, README, LinkedIn | à faire |
 
@@ -98,6 +98,35 @@ Le CSA retire 32 % de la CVA. Allocation d'Euler (sans CSA) : IRS-01 394 k€, I
 Pré-trade d'un IRS payeur 50 M€ 10 ans à 2,60 % : ΔCVA = 146,5 k€ (ET 0,9) sans CSA, 28,0 k€ (ET 0,2) avec CSA,
 en 1,4 à 1,6 s.
 
+## Sensibilités et capital (`src/xva/risk.py`)
+
+- Deltas : choc de 1 bp sur les taux zéro des deux courbes, en triangles aux piliers 1, 2, 5, 10, 30 ans
+  (leur somme est le choc parallèle), centré, **mêmes tirages** (nombres aléatoires communs), σ recalibré à chaque choc.
+- Vega : vols de swaptions ±1 % relatif, σ recalibré, mêmes tirages.
+- CS01 : spreads CDS de la contrepartie ±1 bp par pilier, re-bootstrap, mêmes expositions (pas de resimulation).
+- SA-CCR taux (CRE52) : un hedging set EUR, buckets < 1, 1-5, > 5 ans, delta ±1, MF margé et non margé,
+  multiplicateur, plafond de l'EAD margée par la non margée.
+- BA-CVA réduit (MAR50) : `K = 0,65·√[(0,5·ΣSCVA)² + 0,75·ΣSCVA²]`. Approximations : maturité effective
+  = maturité résiduelle pondérée par les nominaux (plancher 1 an) ; RW recopiés pour quelques secteurs
+  (contrepartie démo : industrie IG, 3 %), à revérifier contre MAR50.16 avant publication.
+
+Portefeuille démo avec CSA, 10 000 chemins, € pour +1 bp (erreur-type entre parenthèses), 46 s pour 14 réévaluations :
+
+| Choc | 1Y | 2Y | 5Y | 10Y | Parallèle |
+|---|---|---|---|---|---|
+| Delta CVA | −62 | −589 | −1 007 | 4 725 | 3 068 (26) |
+
+| Pilier CDS | 1Y | 3Y | 5Y | 7Y | 10Y | Parallèle |
+|---|---|---|---|---|---|---|
+| CS01 CVA | 17 | 92 | 289 | 1 055 | 1 300 | 2 754 (3) |
+
+Somme des deltas par pilier = parallèle à 1 € près, idem pour les CS01. Vega CVA (+1 % des vols) : 1 123 €.
+Les erreurs-types restent sous 1 % de la sensibilité grâce aux tirages communs.
+
+Capital : EAD SA-CCR 16,9 M€ (add-on 7,0 M€, RC 5,1 M€), BA-CVA réduit 1,29 M€, contre une CVA comptable de 0,66 M€.
+Avec le CSA démo (seuil 10 M€), RC = seuil + MTA = 10,5 M€ : l'EAD margée (17,6 M€) dépasse la non margée
+et elle est plafonnée. Un CSA à seuil élevé n'allège pas le capital SA-CCR.
+
 ## Tests
 
 ```bash
@@ -105,7 +134,7 @@ pip install -e .[test]
 pytest
 ```
 
-30 tests, environ 30 s :
+38 tests, environ 30 s :
 - HW1F : martingale `E[D] = P(0, t)`, moments de `x` et `∫x`, cohérence ZC futur, option sur ZC et
   swaption Jamshidian contre QuantLib 1.44, Jamshidian contre Monte Carlo en multi-courbes, parité,
   calibrations Q et P retrouvant un σ connu, adaptateur de la fiche 09.
@@ -118,3 +147,6 @@ pytest
   `IsdaCdsEngine` de la fiche remplacé par MidPoint, la convention du moteur) ; CVA d'un swap seul = somme
   de swaptions fermées (< 2 % et 3 ET) ; somme des allocations d'Euler = CVA ; pré-trade = recalcul complet ;
   CVA de la banque = DVA de la contrepartie ; ℓ = 0 → pas de FVA.
+- Risque : triangles de somme 1 ; somme des deltas par pilier = parallèle (< 5 %) ; signes de delta et vega
+  d'un payeur ; somme des CS01 = parallèle ; SA-CCR à la main (un trade, deux buckets avec multiplicateur, margé,
+  plafond) ; BA-CVA réduit à la main (une et deux contreparties).

@@ -1,11 +1,15 @@
-"""Tableau XVA du portefeuille démo, avec et sans CSA, allocation d'Euler et pré-trade : python -m xva.demo"""
+"""Tableau XVA du portefeuille démo (avec et sans CSA), allocation d'Euler, pré-trade, sensibilités et capital :
+python -m xva.demo"""
 import time
 from pathlib import Path
 
+import yaml
+
 from .exposure import exposition, grille
 from .hw1f import calibrer_q
-from .market import marche_test, vols_swaptions
+from .market import RACINE, marche_test, vols_swaptions
 from .products import charger_portefeuille, cube_mtm, swap, valeur
+from .risk import RW_MAR50, ba_cva_reduit, cs01, maturite_effective, sa_ccr, scva, sensibilites
 from .xva import ajustements, allocation_euler, charger_credit, pre_trade
 
 PORTEFEUILLE = Path(__file__).resolve().parents[2] / "portfolios" / "demo.yaml"
@@ -37,6 +41,24 @@ def main(n: int = 10_000, graine: int = 0):
         r = pre_trade(V, V0, nouveau, modele, marche, sim, base, credit, k)
         d = "  ".join(f"Δ{q} {v / 1e3:,.1f} k€ (ET {e / 1e3:,.1f})" for q, (v, e) in r["Δ"].items())
         print(f"\nPré-trade {nouveau.nom} payeur 50 M€ 10 ans 2,60 %, {nom} : {d}  en {r['secondes']:.2f} s")
+
+    t0 = time.perf_counter()
+    sens = sensibilites(trades, marche, vols_swaptions(), credit, csa, n=n, graine=graine)
+    sens |= cs01(exposition(V, sim["D"], t, base, V0, csa), credit, marche.estr)
+    print(f"\nSensibilités avec CSA, € pour +1 bp (vega : +1 % relatif des vols), mêmes tirages, "
+          f"{time.perf_counter() - t0:.0f} s :")
+    for choc, r in sens.items():
+        print(f"  {choc:16s} " + "  ".join(f"{q} {v:9,.0f} ({e:,.0f})" for q, (v, e) in r.items()))
+
+    q = yaml.safe_load((RACINE / "spreads.yaml").read_text(encoding="utf-8"))["contrepartie"]
+    csa_sa = {"H_C": c["H_C"], "H_B": c["H_B"], "MTA": c["MTA"], "mpor_jours": c["mpor_jours"]}
+    M, rw = maturite_effective(trades), RW_MAR50[(q["secteur"], q["qualite"])]
+    print(f"\nCapital (CRE52 / MAR50), M = {M:.2f} ans, RW = {rw:.1%} ({q['secteur']}, {q['qualite']}) :")
+    for nom, k in (("sans CSA", None), ("CSA", csa_sa)):
+        r = sa_ccr(trades, V0, k)
+        K = ba_cva_reduit([scva(rw, [(M, r["EAD"])])])
+        print(f"  {nom:8s} add-on {r['add-on'] / 1e3:8,.1f} k€  RC {r['RC'] / 1e3:8,.1f} k€  "
+              f"multiplicateur {r['multiplicateur']:.3f}  EAD {r['EAD'] / 1e6:6,.2f} M€  BA-CVA {K / 1e3:8,.1f} k€")
 
 
 if __name__ == "__main__":

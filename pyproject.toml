@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xva-engine"
+version = "0.0.1"
+description = "CVA, DVA, FVA d'un netting set de swaps EUR sous Hull-White 1F, validés contre QuantLib"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy", "pandas", "scipy", "pyyaml"]
+
+[project.optional-dependencies]
+test = ["pytest", "QuantLib"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

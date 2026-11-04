@@ -1,8 +1,8 @@
-"""Données de marché : courbes, vols de swaptions, historique BCE.
+"""Market data: curves, swaption vols, ECB history.
 
-Interface de courbe minimale : un appelable t -> P(0, t), t en années ACT/365F (scalaire ou tableau numpy).
-Le moteur ne reconstruit aucune courbe : en production elles viennent de la fiche 09 via depuis_courbe_09(),
-en tests d'une CourbePlate.
+Minimal curve interface: a callable t -> P(0, t), t in ACT/365F years (scalar or numpy array).
+The engine builds no curve: in production they come from project 09 through from_curve_09(),
+in tests from a FlatCurve.
 """
 from dataclasses import dataclass
 from datetime import timedelta
@@ -13,50 +13,50 @@ import numpy as np
 import pandas as pd
 import yaml
 
-RACINE = Path(__file__).resolve().parents[2] / "market"
-Courbe = Callable[[np.ndarray], np.ndarray]
+ROOT = Path(__file__).resolve().parents[2] / "market"
+Curve = Callable[[np.ndarray], np.ndarray]
 
 
-class CourbePlate:
-    """Taux zéro continu constant : courbe de secours pour les tests unitaires."""
+class FlatCurve:
+    """Constant continuous zero rate: fallback curve for unit tests."""
 
-    def __init__(self, taux: float):
-        self.taux = taux
+    def __init__(self, rate: float):
+        self.rate = rate
 
     def __call__(self, t):
-        return np.exp(-self.taux * np.asarray(t, dtype=float))
+        return np.exp(-self.rate * np.asarray(t, dtype=float))
 
 
-def depuis_courbe_09(courbe, jour=None) -> Courbe:
-    """Point de greffe : enveloppe une Courbe / CourbeHW du paquet courbes-taux (méthode P(date), ACT/365F)."""
-    jour = jour or courbe.jour
-    # shortcut: t arrondi au jour (erreur < 0,5 jour), suffisant tant que la grille de simulation est en jours
-    une = np.vectorize(lambda u: courbe.P(jour + timedelta(days=round(u * 365))), otypes=[float])
-    return lambda t: une(np.asarray(t, dtype=float))
+def from_curve_09(curve, day=None) -> Curve:
+    """Plug-in point: wraps a Curve / CurveHW from the ratecurves package (method P(date), ACT/365F)."""
+    day = day or curve.day
+    # shortcut: t rounded to the day (error < 0.5 day), enough while the simulation grid is in days
+    one = np.vectorize(lambda u: curve.P(day + timedelta(days=round(u * 365))), otypes=[float])
+    return lambda t: one(np.asarray(t, dtype=float))
 
 
 @dataclass
-class Marche:
-    estr: Courbe        # actualisation (CSA cash EUR)
-    euribor6m: Courbe   # projection des fixings 6M
+class Market:
+    estr: Curve        # discounting (EUR cash CSA)
+    euribor6m: Curve   # projection of the 6M fixings
 
 
-def marche_test(taux: float = 0.025, base: float = 0.002) -> Marche:
-    """Deux courbes plates séparées d'une base : exerce le multi-courbes sans la fiche 09."""
-    return Marche(CourbePlate(taux), CourbePlate(taux + base))
+def sample_market(rate: float = 0.025, basis: float = 0.002) -> Market:
+    """Two flat curves one basis apart: exercises the multi-curve set-up without project 09."""
+    return Market(FlatCurve(rate), FlatCurve(rate + basis))
 
 
-def vols_swaptions(path: Path = RACINE / "swaption_vols.yaml") -> list[tuple[float, float, float]]:
-    """(expiry, ténor, vol normale en décimal) des swaptions ATM co-terminales."""
+def swaption_vols(path: Path = ROOT / "swaption_vols.yaml") -> list[tuple[float, float, float]]:
+    """(expiry, tenor, normal vol in decimal) of the co-terminal ATM swaptions."""
     d = yaml.safe_load(path.read_text(encoding="utf-8"))
     return [(float(q["expiry"]), float(q["tenor"]), q["vol_bp"] * 1e-4) for q in d["swaptions"]]
 
 
-def historique_bce(maturites=(1, 5, 10)) -> pd.DataFrame:
-    """Taux spot BCE (courbe AAA Svensson) en décimal, une colonne par maturité en années. Mesure P uniquement."""
+def ecb_history(maturities=(1, 5, 10)) -> pd.DataFrame:
+    """ECB spot rates (AAA Svensson curve) in decimal, one column per maturity in years. P measure only."""
     cols = {}
-    for m in maturites:
-        f = RACINE / "bce" / f"YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_{m}Y.csv"
+    for m in maturities:
+        f = ROOT / "ecb" / f"YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_{m}Y.csv"
         s = pd.read_csv(f, index_col="TIME_PERIOD")["OBS_VALUE"]
         cols[m] = s / 100
     return pd.DataFrame(cols).dropna()

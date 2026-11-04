@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xva-engine"
 version = "0.0.1"
-description = "CVA, DVA, FVA d'un netting set de swaps EUR sous Hull-White 1F, validés contre QuantLib"
+description = "CVA, DVA, FVA of a netting set of EUR swaps under Hull-White 1F, validated against QuantLib"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = ["numpy", "pandas", "scipy", "pyyaml"]
 
 [project.optional-dependencies]
 test = ["pytest", "QuantLib"]
-rapport = ["matplotlib"]
+report = ["matplotlib"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

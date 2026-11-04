@@ -1,4 +1,4 @@
-horizon,portefeuille,fenêtres,KS,p-valeur,"puissance (vol ×1,25)",indicatif
+horizon,portfolio,windows,KS,p-value,power (vol ×1.25),indicative
 1 month,payer 5Y,257,0.1077976653696498,0.004690932016332108,0.549,False
 1 month,receiver 10Y,257,0.12655447470817116,0.00047784551508016213,0.549,False
 1 month,steepener 2Y/10Y,257,0.44431712062256806,9.287204903625352e-47,0.549,False

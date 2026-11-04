@@ -1,12 +1,12 @@
-# Netting set SYNTHÉTIQUE d'une contrepartie corporate fictive, vu de la banque.
-# Strikes hors marché pour des MtM non nuls ; trades démarrant aujourd'hui ou à terme (pas de fixing passé en v1).
-contrepartie: Contrepartie A (fictive, BBB)
-csa: {H_C: 10000000, H_B: 10000000, MTA: 500000, mpor_jours: 10}
+# SYNTHETIC netting set of a fictitious corporate counterparty, seen from the bank.
+# Off-market strikes for non-zero MtMs; trades starting today or forward (no past fixing in v1).
+counterparty: Counterparty A (fictitious, BBB)
+csa: {H_C: 10000000, H_B: 10000000, MTA: 500000, mpor_days: 10}
 trades:
-  - {nom: IRS-01, type: irs, sens: payeur,   nominal: 100000000, K: 0.0230, debut: 0, tenor: 10}
-  - {nom: IRS-02, type: irs, sens: receveur, nominal: 50000000,  K: 0.0275, debut: 0, tenor: 5}
-  - {nom: IRS-03, type: irs, sens: payeur,   nominal: 75000000,  K: 0.0260, debut: 1, tenor: 7}
-  - {nom: IRS-04, type: irs, sens: receveur, nominal: 40000000,  K: 0.0300, debut: 0, tenor: 3}
-  - {nom: IRS-05, type: irs, sens: payeur,   nominal: 30000000,  K: 0.0245, debut: 2, tenor: 8}
-  - {nom: OIS-01, type: ois, sens: receveur, nominal: 80000000,  K: 0.0240, debut: 0, tenor: 2}
-  - {nom: OIS-02, type: ois, sens: payeur,   nominal: 60000000,  K: 0.0255, debut: 0, tenor: 6}
+  - {name: IRS-01, type: irs, side: payer,    nominal: 100000000, K: 0.0230, start: 0, tenor: 10}
+  - {name: IRS-02, type: irs, side: receiver, nominal: 50000000,  K: 0.0275, start: 0, tenor: 5}
+  - {name: IRS-03, type: irs, side: payer,    nominal: 75000000,  K: 0.0260, start: 1, tenor: 7}
+  - {name: IRS-04, type: irs, side: receiver, nominal: 40000000,  K: 0.0300, start: 0, tenor: 3}
+  - {name: IRS-05, type: irs, side: payer,    nominal: 30000000,  K: 0.0245, start: 2, tenor: 8}
+  - {name: OIS-01, type: ois, side: receiver, nominal: 80000000,  K: 0.0240, start: 0, tenor: 2}
+  - {name: OIS-02, type: ois, side: payer,    nominal: 60000000,  K: 0.0255, start: 0, tenor: 6}

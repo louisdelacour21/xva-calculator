@@ -1,8 +1,8 @@
-# Vols normales ATM de swaptions EUR co-terminales 10 ans (expiry + ténor = 10).
-# SYNTHÉTIQUE : aucune source gratuite de vols de swaptions. Niveaux choisis dans l'ordre de grandeur
-# des vols normales EUR observées en 2025-2026 (environ 65-85 bp), légère pente décroissante avec l'expiry.
-# Impact : CVA quasi linéaire en σ, publiée à ±20 % de vol. Remplaçable par des cotations réelles sans changer le code.
-source: synthetique
+# ATM normal vols of 10-year co-terminal EUR swaptions (expiry + tenor = 10).
+# SYNTHETIC: no free source of swaption vols. Levels chosen in the range of the EUR normal vols
+# observed in 2025-2026 (about 65-85 bp), slight downward slope with expiry.
+# Impact: CVA nearly linear in σ, published at ±20% of vol. Replaceable by real quotes without changing the code.
+source: synthetic
 date: 2026-11-03
 swaptions:
   - {expiry: 1, tenor: 9, vol_bp: 76}

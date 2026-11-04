@@ -1,40 +1,40 @@
-"""Grille d'exposition, netting, collatéral (CSA) et métriques EE / NEE / PFE / EEPE.
+"""Exposure grid, netting, collateral (CSA) and EE / NEE / PFE / EEPE metrics.
 
-Collatéral, modèle classique : C(t) = max(V(t-M) - H_C, 0) - max(-V(t-M) - H_B, 0).
-shortcut: MTA ajouté aux seuils (H + MTA) au lieu d'un solde de collatéral suivi chemin par chemin ;
-flux payés pendant la MPoR ignorés (MPoR « avancé » en v2).
+Collateral, classic model: C(t) = max(V(t-M) - H_C, 0) - max(-V(t-M) - H_B, 0).
+shortcut: MTA added to the thresholds (H + MTA) instead of a collateral balance tracked path by path;
+cash flows paid during the MPoR ignored ("advanced" MPoR in v2).
 """
 import numpy as np
 
-from .products import indice
+from .products import index
 
-MPOR_10J = 14 / 365  # 10 jours ouvrés ≈ 14 jours calendaires, en années ACT/365F
+MPOR_10D = 14 / 365  # 10 business days ≈ 14 calendar days, in ACT/365F years
 
 
-def grille(trades, mpors=(MPOR_10J,), pas: float = 1 / 12):
-    """(base, complète) : base = pas mensuel ∪ dates de flux ; complète = base ∪ nœuds t - M (> 0)."""
-    T = max(tr.maturite for tr in trades)
-    flux = np.concatenate([np.r_[tr.debut, tr.flux()] for tr in trades])
-    base = np.unique(np.round(np.r_[np.arange(1, int(np.ceil(T / pas)) + 1) * pas, flux], 12))
+def grid(trades, mpors=(MPOR_10D,), step: float = 1 / 12):
+    """(base, full): base = monthly step ∪ cash-flow dates; full = base ∪ t - M nodes (> 0)."""
+    T = max(tr.maturity for tr in trades)
+    flows = np.concatenate([np.r_[tr.start, tr.cashflows()] for tr in trades])
+    base = np.unique(np.round(np.r_[np.arange(1, int(np.ceil(T / step)) + 1) * step, flows], 12))
     base = base[(base > 0) & (base <= T + 1e-12)]
-    noeuds = np.concatenate([base - m for m in mpors if m > 0] or [np.empty(0)])
-    complete = np.unique(np.round(np.r_[base, noeuds[noeuds > 0]], 12))
-    return base, complete
+    nodes = np.concatenate([base - m for m in mpors if m > 0] or [np.empty(0)])
+    full = np.unique(np.round(np.r_[base, nodes[nodes > 0]], 12))
+    return base, full
 
 
-def exposition(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
-    """Métriques sur la grille de base à partir de V_NS (chemins × grille complète) et D(0, t).
+def exposure(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
+    """Metrics on the base grid from V_NS (paths × full grid) and D(0, t).
 
-    csa : {H_C, H_B, MTA, mpor (années)} en unités du nominal ; None = sans collatéral.
-    EE, NEE, PFE non actualisés ; EE* = E[D·E], NEE* = E[D·N] avec leurs erreurs-types.
+    csa: {H_C, H_B, MTA, mpor (years)} in notional units; None = uncollateralised.
+    EE, NEE, PFE undiscounted; EE* = E[D·E], NEE* = E[D·N] with their standard errors.
     """
-    k = np.array([indice(t, u) for u in base])
+    k = np.array([index(t, u) for u in base])
     Vb, Db = V[:, k], D[:, k]
     if csa is None:
         C, C0 = np.zeros_like(Vb), 0.0
     else:
-        # avant la première MPoR, le collatéral reflète la valeur initiale
-        lag = np.array([np.full(len(V), V0) if u - csa["mpor"] <= 1e-12 else V[:, indice(t, u - csa["mpor"])]
+        # before the first MPoR, the collateral reflects the initial value
+        lag = np.array([np.full(len(V), V0) if u - csa["mpor"] <= 1e-12 else V[:, index(t, u - csa["mpor"])]
                         for u in base]).T
         hc, hb = csa["H_C"] + csa["MTA"], csa["H_B"] + csa["MTA"]
         C = np.maximum(lag - hc, 0) - np.maximum(-lag - hb, 0)
@@ -43,13 +43,13 @@ def exposition(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
     n = len(V)
     ee = E.mean(0)
     dt = np.diff(base, prepend=0.0)
-    un_an = base <= min(1.0, base[-1]) + 1e-12
+    one_year = base <= min(1.0, base[-1]) + 1e-12
     eee = np.maximum.accumulate(ee)
     return {
         "t": base, "EE": ee, "NEE": N.mean(0), "PFE": np.quantile(E, 0.975, axis=0),
-        "EE*": (Db * E).mean(0), "ET_EE*": (Db * E).std(0) / np.sqrt(n),
-        "NEE*": (Db * N).mean(0), "ET_NEE*": (Db * N).std(0) / np.sqrt(n),
-        "EEPE": float(np.sum(eee[un_an] * dt[un_an]) / np.sum(dt[un_an])),
-        "E": E, "N": N, "D": Db,  # conservés pour la CVA incrémentale et l'allocation (étape 4)
+        "EE*": (Db * E).mean(0), "SE_EE*": (Db * E).std(0) / np.sqrt(n),
+        "NEE*": (Db * N).mean(0), "SE_NEE*": (Db * N).std(0) / np.sqrt(n),
+        "EEPE": float(np.sum(eee[one_year] * dt[one_year]) / np.sum(dt[one_year])),
+        "E": E, "N": N, "D": Db,  # kept for incremental CVA and allocation (step 4)
         "E0": max(V0 - C0, 0.0), "N0": max(C0 - V0, 0.0),
     }

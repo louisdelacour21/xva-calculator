@@ -3,8 +3,6 @@
 Vectorised Hull-White 1F Monte Carlo engine: collateralised exposure profiles, CVA/DVA/FVA,
 pre-trade incremental CVA and sensitivities, validated against QuantLib and the closed-form swaption price.
 
-Project sheet: `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (Application Linkedin folder).
-
 ## Progress
 
 | # | Step | Status |
@@ -31,22 +29,22 @@ XVA of the demo netting set, adjustable CSA (threshold, MTA, MPoR), cost of a ne
 already simulated, EE/PFE profiles with and without CSA, Euler allocation, proxies shown with their measured impact.
 Computed live (about 2 s at start-up, then cached) rather than from precomputed cubes.
 
-![Pre-trade](rapport/figures/pre_trade.gif)
+![Pre-trade](report/figures/pre_trade.gif)
 
-Validation report: [`rapport/validation.pdf`](rapport/validation.pdf) (self-review, limitations, recommendations;
+Validation report: [`report/validation.pdf`](report/validation.pdf) (self-review, limitations, recommendations;
 independent review still to do).
 
 ## Curves and the project 09 plug-in (`src/xva/market.py`)
 
 The engine knows a single interface: a callable `t -> P(0, t)`, `t` in ACT/365F years.
-A `Marche` object carries two curves, `estr` (discounting) and `euribor6m` (projection).
+A `Market` object carries two curves, `estr` (discounting) and `euribor6m` (projection).
 
-- Until 09 is ready: `marche_test()` returns two flat curves 20 bp apart,
+- Until 09 is ready: `sample_market()` returns two flat curves 20 bp apart,
   which already exercises the multi-curve set-up (β ≠ 1).
-- At plug-in time: `depuis_courbe_09(courbe)` wraps a `Courbe` / `CourbeHW` from the `courbes-taux` package
+- At plug-in time: `from_curve_09(curve)` wraps a `Curve` / `CurveHW` from the `ratecurves` package
   (method `P(date)`). It will be enough to build
-  `Marche(depuis_courbe_09(estr), depuis_courbe_09(euribor6m))` from `courbes.curves.courbe_estr`
-  and `courbe_euribor6m`, then add `courbes-taux` to the dependencies.
+  `Market(from_curve_09(estr), from_curve_09(euribor6m))` from `ratecurves.curves.estr_curve`
+  and `euribor6m_curve`, then add `ratecurves` to the dependencies.
 - Left to do at that point: replace the regular year-fraction schedules in `swap_coupons`
   with the TARGET2 dates from 09 (marked `shortcut:` in the code).
 
@@ -59,7 +57,7 @@ A `Marche` object carries two curves, `estr` (discounting) and `euribor6m` (proj
 - Q calibration: `a = 0.03` fixed, `σ` fitted in normal vol to the 10-year co-terminal ATM swaptions
   (`market/swaption_vols.yaml`, **synthetic** for lack of a free source).
 - P calibration (comparison only): `σ·B(τ)/τ` fitted to the annualised standard deviations of daily changes
-  in the ECB 1, 5 and 10-year spot rates (one year of history, `market/bce/`).
+  in the ECB 1, 5 and 10-year spot rates (one year of history, `market/ecb/`).
 
 First figures (flat curves, synthetic vols): σ(Q) = 0.84%, max vol error 3.6 bp;
 σ(P) = 0.58%, i.e. **-31%**: a CVA calibrated on history would be understated by about as much.
@@ -67,7 +65,7 @@ First figures (flat curves, synthetic vols): σ(Q) = 0.84%, max vol error 3.6 bp
 ## Products (`src/xva/products.py`)
 
 - EURIBOR 6M IRS (deterministic 6M/€STR basis) and €STR OIS, payer or receiver, spot or forward start.
-- `valeur(trades, model, market, t, x_t, D_t, state)`: the `value(t, state)` interface where the neural pricer
+- `value(trades, model, market, t, x_t, D_t, state)`: the `value(t, state)` interface where the neural pricer
   will plug in. Each date = one ZC matrix (paths × maturities) × one weight matrix
   (maturities × trades); only the current coupon, fixed on the path, is added trade by trade.
 - `cube_mtm`: MtM cube paths × dates × trades, kept for incremental CVA.
@@ -145,19 +143,19 @@ Capital: SA-CCR EAD 16.9 M€ (add-on 7.0 M€, RC 5.1 M€), reduced BA-CVA 1.2
 With the demo CSA (10 M€ threshold), RC = threshold + MTA = 10.5 M€: the margined EAD (17.6 M€) exceeds the unmargined one
 and is capped. A high-threshold CSA does not reduce SA-CCR capital.
 
-## Validation (`src/xva/validation.py`, `python -m xva.rapport`)
+## Validation (`src/xva/validation.py`, `python -m xva.report`)
 
-`pip install -e .[rapport]` then `python -m xva.rapport` (a few minutes): CSV tables and figures in `rapport/`.
+`pip install -e .[report]` then `python -m xva.report` (a few minutes): CSV tables and figures in `report/`.
 
 **Convergence** (demo netting set, no CSA): standard error in `N^-0.504`, antithetics divide the variance
 by 4.1 (i.e. 4 times fewer paths). 10,000 paths: CVA 653.0 k€ (SE 3.1), 1.4 s; 50,000: 655.5 k€ (SE 1.4), 6.6 s.
 
-![Convergence](rapport/figures/convergence.png)
+![Convergence](report/figures/convergence.png)
 
 **EE* against the closed-form swaption** (single 10 M€ 5-year payer at par, 40,000 paths): max error 0.46 bp of notional
 at the fixed coupon dates, below the standard error (0.87 bp).
 
-![EE against swaption](rapport/figures/ee_swaption.png)
+![EE against swaption](report/figures/ee_swaption.png)
 
 **P measure against Q** (same draws, 10,000 paths, change vs the CVA under Q):
 
@@ -184,7 +182,7 @@ Three netting sets starting at the horizon: 5-year payer, 10-year receiver, stee
 | 3 months | 85 | 21%, indicative | 0.162 (p 0.02) | 0.153 (p 0.03) | 0.462 (p < 0.001) |
 | 1 year | 21 | 10%, indicative | 0.268 (p 0.08) | 0.244 (p 0.14) | 0.416 (p 0.001) |
 
-![PIT](rapport/figures/backtest_pit.png)
+![PIT](report/figures/backtest_pit.png)
 
 Reading: on directional positions, PITs pile up at both ends (at 1 month, 6 to 10% of
 realisations below the 2.5% quantile instead of 2.5%): historical tails are fatter than the

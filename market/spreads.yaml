@@ -1,17 +1,17 @@
-# Spreads CDS au pair (bp) par pilier en années, recouvrement R, et financement de la banque.
-# SYNTHÉTIQUE : ordres de grandeur par notation (contrepartie BBB, banque A), dans l'esprit des OAS
-# ICE BofA publiées sur FRED (BAMLC0A4CBBB pour le BBB) ; séries ICE non redistribuées ici.
-# Base CDS-obligation ignorée. Impact : CVA publiée à ±25 % de spread (étape 6).
-source: synthetique
+# Par CDS spreads (bp) per pillar in years, recovery R, and the bank's funding.
+# SYNTHETIC: orders of magnitude by rating (BBB counterparty, A bank), in the spirit of the ICE BofA OAS
+# published on FRED (BAMLC0A4CBBB for BBB); ICE series not redistributed here.
+# CDS-bond basis ignored. Impact: CVA published at ±25% of spread (step 6).
+source: synthetic
 date: 2026-11-03
-contrepartie:
-  nom: Contrepartie A (fictive, BBB)
-  secteur: industrie  # BA-CVA : bucket MAR50.16 (BBB = investment grade)
-  qualite: IG
+counterparty:
+  name: Counterparty A (fictitious, BBB)
+  sector: industrial  # BA-CVA: bucket MAR50.16 (BBB = investment grade)
+  quality: IG
   R: 0.40
   spreads_bp: {1: 90, 3: 110, 5: 130, 7: 145, 10: 160}
-banque:
-  nom: Banque (fictive, A)
+bank:
+  name: Bank (fictitious, A)
   R: 0.40
   spreads_bp: {1: 45, 3: 55, 5: 65, 7: 75, 10: 85}
-  financement_bp: 90  # spread de financement non garanti s_F, ℓ = max(s_F - (1-R)·λ, 0)
+  funding_bp: 90  # unsecured funding spread s_F, ℓ = max(s_F - (1-R)·λ, 0)

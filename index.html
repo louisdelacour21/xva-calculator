@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Calculateur XVA</title>
-<meta name="description" content="CVA, DVA, FVA d'un netting set de swaps EUR sous Hull-White 1F et coût pré-trade d'un nouveau swap. Le moteur Python tourne dans le navigateur (Pyodide).">
+<title>XVA calculator</title>
+<meta name="description" content="CVA, DVA, FVA of a netting set of EUR swaps under Hull-White 1F and pre-trade cost of a new swap. The Python engine runs in the browser (Pyodide).">
 <style>
 :root { --bg: #f6f5f1; --panel: #fff; --ink: #1b1d22; --mute: #646a73; --line: #dedbd2; --acc: #1f5fbf;
   --c1: #1f5fbf; --c2: #8fb0e3; --c3: #c2571a; --c4: #e9a77d; --warn: #9a5b00; }
@@ -46,84 +46,84 @@ td, th { padding: 4px 0; border-bottom: 1px solid var(--line); text-align: left;
 td:last-child, th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 ul { margin: 0; padding-left: 18px; font-size: 14px; }
 .warn { color: var(--warn); font-size: 14px; }
-#charge { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 92%, transparent); display: grid; place-items: center; z-index: 9; }
-#charge[hidden] { display: none; }
-#charge .box { max-width: 420px; text-align: center; }
-#barre { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 14px 0 6px; }
-#barre div { height: 100%; width: 0; background: var(--acc); transition: width .5s linear; }
+#loading { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 92%, transparent); display: grid; place-items: center; z-index: 9; }
+#loading[hidden] { display: none; }
+#loading .box { max-width: 420px; text-align: center; }
+#bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 14px 0 6px; }
+#bar div { height: 100%; width: 0; background: var(--acc); transition: width .5s linear; }
 .busy { opacity: .55; transition: opacity .2s; }
 </style>
 </head>
 <body>
-<div id="charge" role="status" aria-live="polite"><div class="box">
-  <h2>Démarrage du moteur XVA</h2>
-  <p id="etape" class="mute">Chargement…</p>
-  <div id="barre"><div></div></div>
-  <p class="cap"><span id="chrono">0</span> s. Entre 30 s et 1 min la première fois : Python, numpy et scipy sont téléchargés puis tout est calculé dans votre navigateur, sans serveur.</p>
+<div id="loading" role="status" aria-live="polite"><div class="box">
+  <h2>Starting the XVA engine</h2>
+  <p id="step" class="mute">Loading…</p>
+  <div id="bar"><div></div></div>
+  <p class="cap"><span id="clock">0</span> s. Between 30 s and 1 min the first time: Python, numpy and scipy are downloaded, then everything is computed in your browser, with no server.</p>
 </div></div>
 
 <header>
-  <h1>Calculateur XVA</h1>
-  <p class="mute" id="intro">Swaps EUR sous Hull-White 1F. Netting set synthétique de 7 swaps face à une contrepartie fictive BBB.</p>
-  <p class="cap"><a href="https://github.com/louisdelacour21/xva-calculator">Code et rapport de validation</a>. Le moteur Python du dépôt tourne ici dans le navigateur (Pyodide).</p>
+  <h1>XVA calculator</h1>
+  <p class="mute" id="intro">EUR swaps under Hull-White 1F. Synthetic netting set of 7 swaps against a fictitious BBB counterparty.</p>
+  <p class="cap"><a href="https://github.com/louisdelacour21/xva-calculator">Code and validation report</a>. The repository's Python engine runs here in the browser (Pyodide).</p>
 </header>
 
 <main class="grid">
   <aside>
     <div class="box">
       <h2>CSA</h2>
-      <label style="margin-top:0"><input type="checkbox" id="avec_csa" checked> Collatéral (CSA)</label>
+      <label style="margin-top:0"><input type="checkbox" id="with_csa" checked> Collateral (CSA)</label>
       <fieldset id="f_csa" style="display:block">
-        <label>Seuil, chaque sens (M€) <output id="o_seuil"></output><input type="range" id="seuil" min="0" max="30" step="0.5"></label>
+        <label>Threshold, each way (M€) <output id="o_threshold"></output><input type="range" id="threshold" min="0" max="30" step="0.5"></label>
         <label>MTA (M€) <output id="o_mta"></output><input type="range" id="mta" min="0" max="2" step="0.1"></label>
-        <label>MPoR (jours ouvrés) <output id="o_mpor"></output><input type="range" id="mpor" min="0" max="2" step="1"></label>
+        <label>MPoR (business days) <output id="o_mpor"></output><input type="range" id="mpor" min="0" max="2" step="1"></label>
       </fieldset>
     </div>
     <div class="box">
-      <h2>Nouveau swap</h2>
-      <fieldset><span class="mute">Sens</span>
-        <label style="margin:0"><input type="radio" name="sens" value="payeur" checked> payeur</label>
-        <label style="margin:0"><input type="radio" name="sens" value="receveur"> receveur</label></fieldset>
-      <label>Nominal (M€) <output id="o_nominal"></output><input type="range" id="nominal" min="10" max="200" step="10" value="50"></label>
-      <label>Maturité (ans) <output id="o_tenor"></output><input type="range" id="tenor" min="1" max="10" step="1" value="10"></label>
-      <label>Taux fixe (%)<input type="number" id="K" step="0.05"></label>
+      <h2>New swap</h2>
+      <fieldset><span class="mute">Direction</span>
+        <label style="margin:0"><input type="radio" name="side" value="payer" checked> payer</label>
+        <label style="margin:0"><input type="radio" name="side" value="receiver"> receiver</label></fieldset>
+      <label>Notional (M€) <output id="o_nominal"></output><input type="range" id="nominal" min="10" max="200" step="10" value="50"></label>
+      <label>Maturity (years) <output id="o_tenor"></output><input type="range" id="tenor" min="1" max="10" step="1" value="10"></label>
+      <label>Fixed rate (%)<input type="number" id="K" step="0.05"></label>
       <p class="cap" id="atm"></p>
     </div>
   </aside>
 
   <div id="res">
     <section class="box">
-      <h2 id="t_xva">XVA du netting set</h2>
+      <h2 id="t_xva">Netting-set XVA</h2>
       <div class="metrics" id="m_xva"></div>
     </section>
     <section class="box">
-      <h2 id="t_pt">Pré-trade</h2>
+      <h2 id="t_pt">Pre-trade</h2>
       <div class="metrics" id="m_pt"></div>
-      <p class="cap">ΔXVA calculé sur les chemins du netting set déjà simulés : seul le nouveau swap est réévalué. Convention : CVA et FCA sont des coûts pour la banque, DVA et FBA des gains.</p>
+      <p class="cap">ΔXVA computed on the netting-set paths already simulated: only the new swap is revalued. Convention: CVA and FCA are costs to the bank, DVA and FBA are benefits.</p>
       <p class="warn" id="warn" hidden></p>
     </section>
     <div class="two" style="margin-top:16px">
       <section class="box" style="margin:0">
-        <h2>Profils d'exposition</h2>
-        <svg id="chart" viewBox="0 0 560 280" role="img" aria-label="Profils EE et PFE en M€ selon les années"></svg>
+        <h2>Exposure profiles</h2>
+        <svg id="chart" viewBox="0 0 560 280" role="img" aria-label="EE and PFE profiles in M€ by year"></svg>
         <div class="leg" id="leg"></div>
         <p class="cap" id="c_prof"></p>
       </section>
       <section class="box" style="margin:0">
-        <h2>Allocation d'Euler de la CVA</h2>
+        <h2>Euler allocation of CVA</h2>
         <table><thead><tr><th>trade</th><th>CVA (k€)</th></tr></thead><tbody id="alloc"></tbody></table>
-        <p class="cap">Sans collatéral ; la somme des contributions égale la CVA.</p>
+        <p class="cap">Uncollateralised; contributions sum to the CVA.</p>
       </section>
     </div>
     <section class="box">
-      <h2>Proxys et limites (à lire)</h2>
+      <h2>Proxies and limitations (read this)</h2>
       <ul>
-        <li><b>Courbes plates</b> €STR et EURIBOR 6M en attendant les courbes bootstrapées du projet 09.</li>
-        <li><b>Vols de swaptions synthétiques</b> (aucune source gratuite) : vols ±20 % → CVA +15,7 % / −15,5 %.</li>
-        <li><b>Spreads CDS synthétiques</b> : spreads ±25 % → CVA +22,6 % / −23,5 %.</li>
-        <li>σ historique (mesure P) au lieu de σ implicite : CVA −23,5 %.</li>
-        <li>Modèle à un facteur : risque de pente quasi invisible (rejeté au backtest point-in-time).</li>
-        <li>MTA ajouté au seuil, flux pendant la MPoR ignorés. Détail dans le rapport de validation.</li>
+        <li><b>Flat curves</b> for €STR and EURIBOR 6M, until the bootstrapped curves of project 09 are plugged in.</li>
+        <li><b>Synthetic swaption vols</b> (no free source): vols ±20% → CVA +15.7% / −15.5%.</li>
+        <li><b>Synthetic CDS spreads</b>: spreads ±25% → CVA +22.6% / −23.5%.</li>
+        <li>Historical σ (P measure) instead of implied σ: CVA −23.5%.</li>
+        <li>One-factor model: slope risk is nearly invisible (rejected in the point-in-time backtest).</li>
+        <li>MTA added to the threshold, cash flows during the MPoR ignored. Details in the validation report.</li>
       </ul>
     </section>
   </div>
@@ -131,98 +131,98 @@ ul { margin: 0; padding-left: 18px; font-size: 14px; }
 
 <script>
 const $ = (id) => document.getElementById(id);
-const fr = (v, d = 1) => v.toLocaleString('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d });
-const k = (v) => fr(v / 1e3) + ' k€', M = (v) => fr(v / 1e6, 2) + ' M€', pct = (v, d = 3) => fr(v * 100, d) + ' %';
+const num = (v, d = 1) => v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const k = (v) => num(v / 1e3) + ' k€', M = (v) => num(v / 1e6, 2) + ' M€', pct = (v, d = 3) => num(v * 100, d) + '%';
 const MPORS = [5, 10, 20];
 let D = null, busy = false, queued = false;
 
 const w = new Worker('web/worker.js');
 const t0 = Date.now(), tick = setInterval(() => {
   const s = (Date.now() - t0) / 1000;
-  $('chrono').textContent = Math.round(s);
-  $('barre').firstElementChild.style.width = Math.min(95, s / 32 * 100) + '%';  // ≈ 30 s mesurés sur un portable
+  $('clock').textContent = Math.round(s);
+  $('bar').firstElementChild.style.width = Math.min(95, s / 32 * 100) + '%';  // ≈ 30 s measured on a laptop
 }, 500);
 
-const params = () => ({ avec_csa: $('avec_csa').checked, seuil: +$('seuil').value, mta: +$('mta').value,
-  mpor: MPORS[+$('mpor').value], sens: document.querySelector('[name=sens]:checked').value,
+const params = () => ({ with_csa: $('with_csa').checked, threshold: +$('threshold').value, mta: +$('mta').value,
+  mpor: MPORS[+$('mpor').value], side: document.querySelector('[name=side]:checked').value,
   nominal: +$('nominal').value, tenor: +$('tenor').value, K: +$('K').value / 100 });
 
-function libelles() {
+function labels() {
   const p = params();
-  $('o_seuil').textContent = fr(p.seuil); $('o_mta').textContent = fr(p.mta); $('o_mpor').textContent = p.mpor;
+  $('o_threshold').textContent = num(p.threshold); $('o_mta').textContent = num(p.mta); $('o_mpor').textContent = p.mpor;
   $('o_nominal').textContent = p.nominal; $('o_tenor').textContent = p.tenor;
-  $('f_csa').disabled = !p.avec_csa;
-  if (D) $('atm').textContent = 'Taux au pair : ' + pct(D.atm[p.tenor]);
+  $('f_csa').disabled = !p.with_csa;
+  if (D) $('atm').textContent = 'Par rate: ' + pct(D.atm[p.tenor]);
 }
 
-function lancer() {
-  libelles();
+function run() {
+  labels();
   if (!D) return;
-  if (busy) { queued = true; return; }  // un seul calcul à la fois, le dernier réglage gagne
+  if (busy) { queued = true; return; }  // one computation at a time, the last setting wins
   busy = true; queued = false; $('res').classList.add('busy');
   w.postMessage(params());
 }
 
-const metric = (titre, [v, e]) => `<div class="m"><span>${titre}</span><b>${k(v)}</b><span>ET ${k(e)}</span></div>`;
+const metric = (title, [v, e]) => `<div class="m"><span>${title}</span><b>${k(v)}</b><span>SE ${k(e)}</span></div>`;
 
-function courbe(R, p) {
-  const x = D.base, series = [['EE sans CSA', D.EE0, '--c2'], ['PFE 97,5 % sans CSA', D.PFE0, '--c4']];
-  if (p.avec_csa) series.push(['EE avec CSA', R.EE, '--c1'], ['PFE 97,5 % avec CSA', R.PFE, '--c3']);
+function chart(R, p) {
+  const x = D.base, series = [['EE without CSA', D.EE0, '--c2'], ['PFE 97.5% without CSA', D.PFE0, '--c4']];
+  if (p.with_csa) series.push(['EE with CSA', R.EE, '--c1'], ['PFE 97.5% with CSA', R.PFE, '--c3']);
   const W = 560, H = 280, L = 40, B = 24, T = 8, xmax = x[x.length - 1];
   const ymax = Math.max(...series.flatMap((s) => s[1])) / 1e6 * 1.05 || 1;
   const X = (v) => L + v / xmax * (W - L - 8), Y = (v) => T + (1 - v / 1e6 / ymax) * (H - T - B);
-  const pas = [1, 2, 5, 10, 20, 50, 100].find((s) => ymax / s <= 6);
+  const step = [1, 2, 5, 10, 20, 50, 100].find((s) => ymax / s <= 6);
   let g = '';
-  for (let y = 0; y <= ymax; y += pas) g += `<line x1="${L}" x2="${W - 8}" y1="${Y(y * 1e6)}" y2="${Y(y * 1e6)}" stroke="var(--line)"/><text x="${L - 6}" y="${Y(y * 1e6) + 4}" text-anchor="end">${y}</text>`;
+  for (let y = 0; y <= ymax; y += step) g += `<line x1="${L}" x2="${W - 8}" y1="${Y(y * 1e6)}" y2="${Y(y * 1e6)}" stroke="var(--line)"/><text x="${L - 6}" y="${Y(y * 1e6) + 4}" text-anchor="end">${y}</text>`;
   for (let a = 0; a <= xmax; a += 2) g += `<text x="${X(a)}" y="${H - 6}" text-anchor="middle">${a}</text>`;
-  g += `<text x="${W - 8}" y="${H - B - 4}" text-anchor="end">années</text><text x="${L - 6}" y="${T + 4}" text-anchor="end" dy="-0">M€</text>`;
+  g += `<text x="${W - 8}" y="${H - B - 4}" text-anchor="end">years</text><text x="${L - 6}" y="${T + 4}" text-anchor="end" dy="-0">M€</text>`;
   for (const [, ys, c] of series) g += `<polyline fill="none" stroke="var(${c})" stroke-width="1.6" points="${x.map((v, i) => X(v).toFixed(1) + ',' + Y(ys[i]).toFixed(1)).join(' ')}"/>`;
   $('chart').innerHTML = g;
   $('leg').innerHTML = series.map(([n, , c]) => `<span><i style="background:var(${c})"></i>${n}</span>`).join('');
-  const pfe = p.avec_csa ? R.PFE : D.PFE0;
-  $('c_prof').textContent = `EEPE ${M(R.EEPE)}, PFE maximale ${M(Math.max(...pfe))} (dents de scie : chaque date de flux fait tomber la valeur).`;
+  const pfe = p.with_csa ? R.PFE : D.PFE0;
+  $('c_prof').textContent = `EEPE ${M(R.EEPE)}, peak PFE ${M(Math.max(...pfe))} (saw-tooth: each cash-flow date drops the value).`;
 }
 
-function afficher(R) {
+function show(R) {
   const p = params();
-  $('t_xva').textContent = `XVA du netting set (${p.avec_csa ? 'avec' : 'sans'} CSA), V0 = ${M(D.V0)}`;
+  $('t_xva').textContent = `Netting-set XVA (${p.with_csa ? 'with' : 'without'} CSA), V0 = ${M(D.V0)}`;
   $('m_xva').innerHTML = Object.entries(R.xva).map(([q, v]) => metric(q, v)).join('');
-  $('t_pt').textContent = `Pré-trade : ${p.sens} ${p.nominal} M€, ${p.tenor} ans à ${pct(p.K)}`;
+  $('t_pt').textContent = `Pre-trade: ${p.side} ${p.nominal} M€, ${p.tenor} years at ${pct(p.K)}`;
   $('m_pt').innerHTML = Object.entries(R.delta).map(([q, v]) => metric('Δ' + q, v)).join('')
-    + `<div class="m"><span>Temps de calcul</span><b>${fr(R.secondes, 2)} s</b><span>MtM du nouveau swap ${k(R.V0_new)}</span></div>`;
+    + `<div class="m"><span>Compute time</span><b>${num(R.seconds, 2)} s</b><span>New swap MtM ${k(R.V0_new)}</span></div>`;
   const [c, e] = R.xva.CVA;
   $('warn').hidden = !(e > 0.05 * c);
-  $('warn').textContent = `Erreur-type de la CVA à ${pct(e / c, 1)} (> 5 %).`;
-  courbe(R, p);
+  $('warn').textContent = `CVA standard error at ${pct(e / c, 1)} (> 5%).`;
+  chart(R, p);
 }
 
 w.onmessage = ({ data: { type, data } }) => {
-  if (type === 'etape') $('etape').textContent = data;
-  else if (type === 'pret') {
+  if (type === 'step') $('step').textContent = data;
+  else if (type === 'ready') {
     D = data;
-    $('seuil').value = D.csa.seuil; $('mta').value = D.csa.mta; $('mpor').value = MPORS.indexOf(D.csa.mpor);
+    $('threshold').value = D.csa.threshold; $('mta').value = D.csa.mta; $('mpor').value = MPORS.indexOf(D.csa.mpor);
     $('K').value = (D.atm[10] * 100).toFixed(3);
-    $('intro').textContent += ` σ(Q) = ${pct(D.sigma, 2)} calibré sur les swaptions ; ${D.N.toLocaleString('fr-FR')} chemins antithétiques, graine fixe ; ET = erreur-type Monte Carlo.`;
-    $('alloc').innerHTML = [...D.alloc].sort((a, b) => b[1] - a[1]).map(([n, v]) => `<tr><td>${n}</td><td>${fr(v / 1e3)}</td></tr>`).join('');
-    $('etape').textContent = 'Premier calcul XVA et pré-trade…';
-    lancer();
-  } else if (type === 'resultat') {
-    clearInterval(tick); $('charge').hidden = true;
+    $('intro').textContent += ` σ(Q) = ${pct(D.sigma, 2)} calibrated to swaptions; ${D.N.toLocaleString('en-US')} antithetic paths, fixed seed; SE = Monte Carlo standard error.`;
+    $('alloc').innerHTML = [...D.alloc].sort((a, b) => b[1] - a[1]).map(([n, v]) => `<tr><td>${n}</td><td>${num(v / 1e3)}</td></tr>`).join('');
+    $('step').textContent = 'First XVA and pre-trade computation…';
+    run();
+  } else if (type === 'result') {
+    clearInterval(tick); $('loading').hidden = true;
     busy = false; $('res').classList.remove('busy');
-    afficher(data);
-    if (queued) lancer();
-  } else if (type === 'erreur') {
+    show(data);
+    if (queued) run();
+  } else if (type === 'error') {
     clearInterval(tick); busy = false;
-    $('charge').hidden = false;
-    $('etape').textContent = 'Le moteur n\'a pas pu démarrer : ' + data;
+    $('loading').hidden = false;
+    $('step').textContent = 'The engine could not start: ' + data;
   }
 };
 
-// comme l'appli Streamlit : changer de maturité remet le taux fixe au pair (enregistré avant lancer, donc appliqué avant)
+// like the Streamlit app: changing the maturity resets the fixed rate to par (registered before run, so applied first)
 $('tenor').addEventListener('change', () => { if (D) $('K').value = (D.atm[+$('tenor').value] * 100).toFixed(3); });
-document.querySelectorAll('aside input').forEach((el) => el.addEventListener('change', lancer));
-document.querySelectorAll('aside input[type=range]').forEach((el) => el.addEventListener('input', libelles));
-libelles();
+document.querySelectorAll('aside input').forEach((el) => el.addEventListener('change', run));
+document.querySelectorAll('aside input[type=range]').forEach((el) => el.addEventListener('input', labels));
+labels();
 </script>
 </body>
 </html>

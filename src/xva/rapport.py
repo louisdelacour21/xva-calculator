@@ -1,4 +1,4 @@
-"""Graphiques et tableaux de validation (étape 6) : python -m xva.rapport  ->  rapport/figures/*.png, rapport/*.csv"""
+"""Validation charts and tables (step 6) : python -m xva.rapport  ->  rapport/figures/*.png, rapport/*.csv"""
 import time
 from pathlib import Path
 
@@ -35,12 +35,12 @@ def main():
           f"{conv.round(1).to_string(index=False)}")
     fig, ax = plt.subplots(1, 2, figsize=(10, 4))
     ax[0].errorbar(conv["N"], conv["CVA"] / 1e3, yerr=1.96 * conv["ET"] / 1e3, fmt="o-", capsize=3)
-    ax[0].set(xscale="log", xlabel="chemins N", ylabel="CVA (k€), IC 95 %", title="CVA du portefeuille démo")
-    ax[1].loglog(conv["N"], conv["ET"], "o-", label=f"antithétiques (pente {pente:.2f})")
-    ax[1].loglog(conv["N"], conv["ET sans antithétiques"], "s--", label="sans antithétiques")
+    ax[0].set(xscale="log", xlabel="paths N", ylabel="CVA (k€), 95% CI", title="Demo netting-set CVA")
+    ax[1].loglog(conv["N"], conv["ET"], "o-", label=f"antithetic (slope {pente:.2f})")
+    ax[1].loglog(conv["N"], conv["ET sans antithétiques"], "s--", label="without antithetics")
     ax[1].loglog(conv["N"], conv["ET"].iloc[0] * np.sqrt(conv["N"].iloc[0] / conv["N"]), ":", c="grey",
                  label="1/√N")
-    ax[1].set(xlabel="chemins N", ylabel="erreur-type (€)", title="Erreur-type")
+    ax[1].set(xlabel="paths N", ylabel="standard error (€)", title="Standard error")
     ax[1].legend()
     fig.tight_layout()
     fig.savefig(SORTIE / "figures" / "convergence.png", dpi=130)
@@ -53,7 +53,7 @@ def main():
     e = pq["écart"].astype(float).iloc[1:] * 100
     ax.barh(e.index, e, color=["#b2182b" if v < 0 else "#2166ac" for v in e])
     ax.axvline(0, c="k", lw=0.8)
-    ax.set(xlabel="écart de CVA contre la référence Q (%)", title="CVA : mesure P, vols, retour à la moyenne, spreads")
+    ax.set(xlabel="CVA change vs the Q reference (%)", title="CVA: P measure, vols, mean reversion, spreads")
     ax.invert_yaxis()
     fig.tight_layout()
     fig.savefig(SORTIE / "figures" / "etude_pq.png", dpi=130)
@@ -69,7 +69,7 @@ def main():
             ax[i, j].hist(df[p], bins=10, range=(0, 1), density=True, color="#4c72b0")
             ax[i, j].axhline(1, c="k", ls=":", lw=0.8)
             ax[i, j].set_title(f"{p}, {h} (n = {len(df)})", fontsize=9)
-    fig.suptitle("PIT des valeurs réalisées dans la loi simulée (uniforme si le modèle est juste)")
+    fig.suptitle("PIT of realised values in the simulated distribution (uniform if the model is right)")
     fig.tight_layout()
     fig.savefig(SORTIE / "figures" / "backtest_pit.png", dpi=130)
     ee_swaption(modele, marche)
@@ -96,9 +96,9 @@ def ee_swaption(modele, marche, nominal=10e6, tenor=5, n=40_000):
     print(f"\nEE* contre swaption ({n:,} chemins) : écart max {np.abs(ecart).max():.2f} bp du nominal, "
           f"ET {et.max():.2f} bp")
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(t, ee.mean(0) / 1e3, label="EE* simulée (Monte Carlo)")
-    ax.plot(u, np.array(sw) / 1e3, "o", c="#b2182b", label="swaption payeuse fermée (Jamshidian)")
-    ax.set(xlabel="années", ylabel="k€", title=f"Payeur seul {nominal / 1e6:.0f} M€ {tenor} ans au pair, sans CSA")
+    ax.plot(t, ee.mean(0) / 1e3, label="simulated EE* (Monte Carlo)")
+    ax.plot(u, np.array(sw) / 1e3, "o", c="#b2182b", label="closed-form payer swaption (Jamshidian)")
+    ax.set(xlabel="years", ylabel="k€", title=f"Single payer {nominal / 1e6:.0f} M€ {tenor}y at par, no CSA")
     ax.legend()
     fig.tight_layout()
     fig.savefig(SORTIE / "figures" / "ee_swaption.png", dpi=130)

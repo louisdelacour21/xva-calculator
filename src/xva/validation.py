@@ -17,7 +17,7 @@ from .products import cube_mtm, swap, valeur
 from .xva import Credit, bootstrap, contributions, erreur_type
 
 MATURITES_BCE = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "15Y", "20Y", "30Y"]
-HORIZONS = {"1 mois": 21, "3 mois": 63, "1 an": 252}  # en jours ouvrés de l'historique
+HORIZONS = {"1 month": 21, "3 months": 63, "1 year": 252}  # en jours ouvrés de l'historique
 
 
 def chemins_cva(trades, modele, marche, credit, n, graine=0, csa=None, antithetiques=True):
@@ -53,16 +53,16 @@ def etude_pq(trades, marche, cotations, credit, sigma_p, n=10_000, a=0.03):
     spread = lambda f: Credit(bootstrap({T: v * f for T, v in s.spreads.items()}, marche.estr, s.R), credit.banque,
                               credit.sF)
     ref = q()
-    cas = {"Q, σ implicite (référence)": (ref, credit), "P, σ historique": (HW1F(a, sigma_p, marche.estr), credit),
-           "vols +20 %": (q(vol(1.2)), credit), "vols −20 %": (q(vol(0.8)), credit),
-           "a = 0,01": (q(aa=0.01), credit), "a = 0,05": (q(aa=0.05), credit),
-           "spreads +25 %": (ref, spread(1.25)), "spreads −25 %": (ref, spread(0.75))}
+    cas = {"Q, implied σ (reference)": (ref, credit), "P, historical σ": (HW1F(a, sigma_p, marche.estr), credit),
+           "vols +20%": (q(vol(1.2)), credit), "vols −20%": (q(vol(0.8)), credit),
+           "a = 0.01": (q(aa=0.01), credit), "a = 0.05": (q(aa=0.05), credit),
+           "spreads +25%": (ref, spread(1.25)), "spreads −25%": (ref, spread(0.75))}
     r = {}
     for nom, (m, cr) in cas.items():
         c = chemins_cva(trades, m, marche, cr, n)
         r[nom] = {"σ": m.sigma, "CVA": float(c.mean()), "ET": erreur_type(c)}
     for v in r.values():
-        v["écart"] = v["CVA"] / r["Q, σ implicite (référence)"]["CVA"] - 1
+        v["écart"] = v["CVA"] / r["Q, implied σ (reference)"]["CVA"] - 1
     return pd.DataFrame(r).T
 
 
@@ -90,9 +90,9 @@ def portefeuilles_test(h: float, P) -> dict:
     démarrage à l'horizon pour qu'aucun fixing ne tombe dans la fenêtre.
     """
     atm = lambda n: taux_swap(h, n, P, P)[0]
-    return {"payeur 5Y": [swap("A", "irs", 1, 10e6, atm(5), h, 5)],
-            "receveur 10Y": [swap("B", "irs", -1, 10e6, atm(10), h, 10)],
-            "pentification 2Y/10Y": [swap("C1", "irs", 1, 10e6, atm(10), h, 10),
+    return {"payer 5Y": [swap("A", "irs", 1, 10e6, atm(5), h, 5)],
+            "receiver 10Y": [swap("B", "irs", -1, 10e6, atm(10), h, 10)],
+            "steepener 2Y/10Y": [swap("C1", "irs", 1, 10e6, atm(10), h, 10),
                                      swap("C2", "irs", -1, 45e6, atm(2), h, 2)]}
 
 

@@ -16,9 +16,11 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 | 4 | Crédit, CVA/DVA/FVA, incrémentale | fait |
 | 5 | Sensibilités CRN, SA-CCR, BA-CVA | fait |
 | 6 | Backtest PIT, convergence, étude P/Q | fait |
-| 7 | Streamlit, GIF ; rapport, README, LinkedIn | fait (en local ; mise en ligne à faire) |
+| 7 | Streamlit, GIF ; rapport, README, LinkedIn | fait |
 
 ## Démo (`app.py`)
+
+En ligne : https://xva-calculator-aqs3w2xdkgad2z9vhmndxt.streamlit.app/ (premier chargement ~1 min si l'appli dormait). En local :
 
 ```bash
 pip install -r requirements.txt

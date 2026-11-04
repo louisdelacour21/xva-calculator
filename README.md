@@ -20,8 +20,6 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 
 ## Démo (`app.py`)
 
-Sans serveur : https://louisdelacour21.github.io/xva-calculator/ (le même moteur Python dans le navigateur via Pyodide, `index.html` + `web/` ; 30 s à 1 min au premier chargement, puis quelques secondes par réglage).
-
 En ligne : https://xva-calculator-aqs3w2xdkgad2z9vhmndxt.streamlit.app/ (premier chargement ~1 min si l'appli dormait). En local :
 
 ```bash

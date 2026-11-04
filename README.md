@@ -20,7 +20,7 @@ Fiche projet : `projets-cv/fiches/pdf/05-calculateur-xva.pdf` (dossier Applicati
 
 ## Démo (`app.py`)
 
-En ligne : https://xva-calculator-aqs3w2xdkgad2z9vhmndxt.streamlit.app/ (premier chargement ~1 min si l'appli dormait). En local :
+En ligne : https://xva-calculator-dwrrvgykssdappmhxqokdqu.streamlit.app/ (premier chargement ~1 min si l'appli dormait). En local :
 
 ```bash
 pip install -r requirements.txt

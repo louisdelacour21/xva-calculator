@@ -10,4 +10,4 @@ def test_app_tourne_avec_et_sans_csa():
     assert not at.exception
     assert at.metric[0].label == "CVA"
     at.toggle[0].set_value(False).run()
-    assert not at.exception and "sans CSA" in at.subheader[0].value
+    assert not at.exception and "without CSA" in at.subheader[0].value

@@ -9,12 +9,13 @@ pre-trade incremental CVA and sensitivities, validated against QuantLib and the 
 |---|------|--------|
 | 1 | Repo, curve interface, HW1F, exact simulation | done (flat curves until project 09) |
 | 2 | Jamshidian, Q calibration, P comparison | done |
-| — | Plug in the project 09 curves | waiting for 09 |
+| — | Plug in the project 09 curves | done in the app, as a snapshot (`market/curves_09.csv`); TARGET2 schedules still to do |
 | 3 | Vectorised 6M IRS / OIS; grid, netting, CSA, metrics | done |
 | 4 | Credit, CVA/DVA/FVA, incremental | done |
 | 5 | CRN sensitivities, SA-CCR, BA-CVA | done |
 | 6 | PIT backtest, convergence, P/Q study | done |
 | 7 | Streamlit, GIF; report, README, LinkedIn | done |
+| 8 | Interactive app: typed inputs, CSV/Excel upload, editable trades and market data, capital and stress tabs | done |
 
 ## Demo (`app.py`)
 
@@ -25,9 +26,34 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-XVA of the demo netting set, adjustable CSA (threshold, MTA, MPoR), cost of a new swap in 1 to 3 s on the paths
-already simulated, EE/PFE profiles with and without CSA, Euler allocation, proxies shown with their measured impact.
-Computed live (about 2 s at start-up, then cached) rather than from precomputed cubes.
+Type your inputs or upload a file, then press Run. Everything is computed live (about 15 s for 10,000 paths on a PC,
+then cached). The inputs stay editable and a changed input never overwrites the results on screen until you press Run.
+
+| Tab | What it does |
+|---|---|
+| Results | Mark-to-market, total XVA, adjusted value; CVA, DVA, FCA, FBA with 95% intervals; EEPE, peak PFE, EE/NEE/PFE profile, data checks |
+| Trades | Editable netting set (IRS or OIS, payer or receiver, forward-starting or seasoned, years or real dates); per trade: standalone CVA, Euler CVA, leave-one-out ΔCVA, netting benefit |
+| Market data | Editable curves with presets (flat, ECB AAA curve, project 09 bootstrapped curves), CDS spreads, recoveries, funding spread, swaption vols, mean reversion, σ override, fit table |
+| Pre-trade | Candidate trades compared on the paths already simulated: ΔCVA, ΔDVA, ΔFVA, ΔXVA, charge in bp, all-in rate |
+| Sensitivities | On demand: deltas per pillar and parallel, vega, with standard errors (common random numbers); CS01 per CDS pillar |
+| Capital | SA-CCR EAD, SCVA and reduced BA-CVA by sector and credit quality, next to the accounting CVA |
+| Stress | Editable scenarios (rates, vols, counterparty and bank spreads), full revaluation on the same draws |
+| Method | File formats, model, proxies and limitations |
+
+The sidebar holds the CSA (thresholds, MTA, independent amount, margin period of risk, on/off) and the simulation
+(paths, seed, grid step, PFE level, valuation date).
+
+### Your own data
+
+**Template** gives the format, **My inputs** exports what is on screen, and the results export to Excel from the Results tab.
+
+- **Excel**: one sheet per table (`trades`, `candidates`, `curves`, `credit`, `vols`, `stress`, `settings`). Only the tables found are replaced, so a file with your trades alone is enough.
+- **CSV**: one table per file, recognised by the file name or its columns. Semicolons, decimal commas and thousands separators are read, and common column names too (`nominal`, `strike`, `maturity_date`...).
+- **Trades**: `name, type, side, notional, fixed_rate_pct, start, tenor` or `maturity`. `start` and `maturity` are years from the valuation date or dates; a past start makes a seasoned trade, with `last_fixing_pct` for the running coupon. An optional `netting_set` column adds a selector.
+
+A bad file is refused as a whole, with the row and column of each problem, and the inputs stay as they were.
+Files are read in memory and never written to disk. The public demo runs on a shared free server: for a confidential
+book, clone the repository and run it on your machine. `XVA_MAX_MB` raises the memory limit (600 MB by default).
 
 ![Pre-trade](report/figures/pre_trade.gif)
 
@@ -39,14 +65,14 @@ independent review still to do).
 The engine knows a single interface: a callable `t -> P(0, t)`, `t` in ACT/365F years.
 A `Market` object carries two curves, `estr` (discounting) and `euribor6m` (projection).
 
-- Until 09 is ready: `sample_market()` returns two flat curves 20 bp apart,
-  which already exercises the multi-curve set-up (β ≠ 1).
-- At plug-in time: `from_curve_09(curve)` wraps a `Curve` / `CurveHW` from the `ratecurves` package
-  (method `P(date)`). It will be enough to build
-  `Market(from_curve_09(estr), from_curve_09(euribor6m))` from `ratecurves.curves.estr_curve`
-  and `euribor6m_curve`, then add `ratecurves` to the dependencies.
-- Left to do at that point: replace the regular year-fraction schedules in `swap_coupons`
-  with the TARGET2 dates from 09 (marked `shortcut:` in the code).
+- `sample_market()` returns two flat curves 20 bp apart, which already exercises the multi-curve set-up (β ≠ 1).
+- `ZeroCurve(tenors, rates)` takes continuous zero rates per pillar: what the app's editor, files and presets use.
+- `market/curves_09.csv` is a snapshot of the project 09 curves (`scripts/snapshot_curves_09.py`), levels from its
+  reconstructed quotes, so the online demo does not need the `ratecurves` package.
+- `from_curve_09(curve)` wraps a `Curve` / `CurveHW` from `ratecurves` (method `P(date)`) for a direct plug-in:
+  `Market(from_curve_09(estr), from_curve_09(euribor6m))`.
+- Left to do: replace the regular year-fraction schedules in `swap_coupons` with the TARGET2 dates from 09
+  (marked `shortcut:` in the code).
 
 ## Hull-White 1F (`src/xva/hw1f.py`)
 
@@ -71,14 +97,15 @@ First figures (flat curves, synthetic vols): σ(Q) = 0.84%, max vol error 3.6 bp
 - `cube_mtm`: MtM cube paths × dates × trades, kept for incremental CVA.
 - Fix to the project sheet: the running €STR leg is worth `exp(∫_s^t r) − P(t, e)`, not `exp(∫r)·P(t, e) − P(t, e)`
   (error caught by the martingale test).
-- No seasoned trades yet (past fixings): to add with the fixings from 09.
+- Seasoned trades: the coupon running at the valuation date comes from `last_fixing_pct` (the EURIBOR fixing, or the
+  annualised €STR accrued so far), then the remaining cash flows are valued as usual.
 
 ## Exposure (`src/xva/exposure.py`)
 
 - Grid: monthly ∪ cash-flow dates ∪ `t − MPoR` nodes.
 - Classic collateral `C(t) = max(V(t−M) − H_C, 0) − max(−V(t−M) − H_B, 0)`, MTA added to the thresholds
-  (documented approximation), cash flows during the MPoR ignored.
-- EE, NEE, PFE 97.5%, discounted EE* and NEE* with standard errors, EEPE (effective EE over one year).
+  (documented approximation), cash flows during the MPoR ignored. An independent amount shifts the collateral held.
+- EE, NEE, PFE (97.5% by default, adjustable), discounted EE* and NEE* with standard errors, EEPE (effective EE over one year).
 
 Demo netting set (`portfolios/demo.yaml`, 7 fictitious swaps, 435 M€ notional, Q-calibrated σ, 10,000 paths,
 240 dates, cube in 4 s on a PC):
@@ -199,7 +226,7 @@ pip install -e .[test]
 pytest
 ```
 
-42 tests, about 1 min:
+112 tests, about 2 min:
 - HW1F: martingale `E[D] = P(0, t)`, moments of `x` and `∫x`, forward ZC consistency, ZC option and
   Jamshidian swaption against QuantLib 1.44, Jamshidian against Monte Carlo in multi-curve, parity,
   Q and P calibrations recovering a known σ, project 09 adapter.
@@ -217,4 +244,9 @@ pytest
   cap); reduced BA-CVA by hand (one and two counterparties).
 - Validation: uniform PITs (KS not rejected) when realised curves are drawn from the model itself;
   KS power at nominal level with no misspecification and increasing with the number of windows; convergence slope −0.5.
-- App: starts without error, with and without CSA (`streamlit.testing`).
+- Inputs: Excel round trip keeps every value, CSV variants (semicolons, decimal commas, aliases), each bad file or cell
+  refused with its row and column, seasoned trades and dates, curve presets, stress scenarios.
+- Pipeline: demo regression, adjusted value identity, Euler sum, memory guard, impossible credit curve, stress base
+  = run on the same draws, results workbook.
+- App (`streamlit.testing`): first load, typed numbers, a changed input waits for Run, CSA off, stress, sensitivities,
+  preset then reset. File upload needs a real browser, so it was tested by hand with Playwright (valid, refused and unknown files).

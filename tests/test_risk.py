@@ -85,3 +85,16 @@ def test_ba_cva_reduced():
     assert s == pytest.approx(0.03 * 5 * 309_679.0 * 0.884797 / 1.4, rel=1e-6)
     assert ba_cva_reduced([s]) == pytest.approx(0.65 * s, rel=1e-12)  # one counterparty: √(0.25 + 0.75) = 1
     assert ba_cva_reduced([s, s]) == pytest.approx(0.65 * s * np.sqrt(2.5), rel=1e-12)  # √(0.25·4 + 0.75·2)
+
+
+def test_sa_ccr_independent_amount_is_nica():
+    tr = [swap("A", "irs", 1, 10e6, 0.025, 0.0, 5)]
+    assert sa_ccr(tr, 1e6, {"H_C": 0.0, "H_B": 0.0, "MTA": 0.0, "mpor_days": 10, "IA": 0.0})["RC"] == 0.0
+    r = sa_ccr(tr, 1e6, {"H_C": 2e6, "H_B": 2e6, "MTA": 0.0, "mpor_days": 10, "IA": 5e5})
+    assert r["RC"] == pytest.approx(1.5e6)  # CRE52.18: TH + MTA - NICA above V - C
+    assert sa_ccr(tr, 1e6, {"H_C": 2e6, "H_B": 2e6, "MTA": 0.0, "mpor_days": 10, "IA": 3e6})["RC"] == 0.0
+
+
+def test_sa_ccr_seasoned_trade_counts_from_today():
+    assert sa_ccr([swap("A", "irs", 1, 10e6, 0.025, -3.0, 8)], 0.0)["add-on"] == pytest.approx(
+        sa_ccr([swap("A", "irs", 1, 10e6, 0.025, 0.0, 5)], 0.0)["add-on"])

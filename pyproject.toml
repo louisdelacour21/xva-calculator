@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "CVA, DVA, FVA of a netting set of EUR swaps under Hull-White 1F, validated against QuantLib"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["numpy", "pandas", "scipy", "pyyaml"]
+dependencies = ["numpy", "pandas", "scipy", "pyyaml", "openpyxl"]
 
 [project.optional-dependencies]
 test = ["pytest", "QuantLib"]

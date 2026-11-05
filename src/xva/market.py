@@ -27,6 +27,17 @@ class FlatCurve:
         return np.exp(-self.rate * np.asarray(t, dtype=float))
 
 
+class ZeroCurve:
+    """Continuous zero rates per pillar, linear between pillars, flat beyond: the curve typed or uploaded by the user."""
+
+    def __init__(self, tenors, rates):
+        self.tenors, self.rates = np.asarray(tenors, dtype=float), np.asarray(rates, dtype=float)
+
+    def __call__(self, t):
+        t = np.asarray(t, dtype=float)
+        return np.exp(-np.interp(t, self.tenors, self.rates) * t)
+
+
 def from_curve_09(curve, day=None) -> Curve:
     """Plug-in point: wraps a Curve / CurveHW from the ratecurves package (method P(date), ACT/365F)."""
     day = day or curve.day
@@ -60,3 +71,12 @@ def ecb_history(maturities=(1, 5, 10)) -> pd.DataFrame:
         s = pd.read_csv(f, index_col="TIME_PERIOD")["OBS_VALUE"]
         cols[m] = s / 100
     return pd.DataFrame(cols).dropna()
+
+
+def ecb_latest() -> tuple[str, pd.DataFrame]:
+    """(date, table tenor in years / AAA zero rate in %, continuously compounded) at the latest ECB date."""
+    def tenor(f):
+        return int(f.stem[3:-1]) * (1 / 12 if f.stem.endswith("M") else 1)
+    s = {tenor(f): pd.read_csv(f, index_col="TIME_PERIOD")["OBS_VALUE"] for f in ROOT.glob("ecb_history/SR_*.csv")}
+    d = pd.DataFrame(s).dropna().sort_index(axis=1)
+    return d.index[-1], d.iloc[-1].rename_axis("tenor").reset_index(name="rate")

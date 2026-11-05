@@ -7,7 +7,7 @@ central, same draws, σ recalibrated; vega: swaption vols ±1% (relative); CS01:
 import numpy as np
 
 from .exposure import exposure, grid
-from .hw1f import calibrate_q
+from .hw1f import HW1F, calibrate_q
 from .market import Market
 from .products import cube_mtm, value
 from .xva import Credit, bootstrap, contributions, std_error
@@ -33,9 +33,9 @@ def _rebootstrap(credit: Credit, P) -> Credit:
     return Credit(rb(credit.counterparty), rb(credit.bank), credit.sF)
 
 
-def revalue(market, quotes, trades, base, t, n, seed, credit, csa) -> dict:
-    """Full chain: Q calibration, simulation (fixed seed), cube, exposure, contributions per path."""
-    model, _ = calibrate_q(market.estr, market.euribor6m, quotes)
+def revalue(market, quotes, trades, base, t, n, seed, credit, csa, a=0.03, sigma=None) -> dict:
+    """Full chain: Q calibration (or σ given), simulation (fixed seed), cube, exposure, contributions per path."""
+    model = HW1F(a, sigma, market.estr) if sigma else calibrate_q(market.estr, market.euribor6m, quotes, a)[0]
     sim = model.simulate(t, n, seed=seed)
     cube = cube_mtm(trades, model, market, sim)
     V0 = value(trades, model, market, 0.0, 0.0, 1.0)[0].sum()
@@ -47,16 +47,18 @@ def _central(up: dict, down: dict) -> dict:
     return {k: (float(((up[k] - down[k]) / 2).mean()), std_error((up[k] - down[k]) / 2)) for k in up}
 
 
-def sensitivities(trades, market, quotes, credit, csa=None, n=10_000, seed=0, h=1e-4, dvol=0.01) -> dict:
-    """{bump: {adjustment: (sensitivity, SE)}} for +1 bp per pillar and parallel, and +1% of vols."""
-    base, t = grid(trades, mpors=(csa["mpor"],) if csa else ())
-    rev = lambda m, c: revalue(m, c, trades, base, t, n, seed, credit, csa)
+def sensitivities(trades, market, quotes, credit, csa=None, n=10_000, seed=0, h=1e-4, dvol=0.01,
+                  a=0.03, sigma=None, step=1 / 12) -> dict:
+    """{bump: {adjustment: (sensitivity, SE)}} for +1 bp per pillar and parallel, and +1% of vols (or of σ if given)."""
+    base, t = grid(trades, mpors=(csa["mpor"],) if csa else (), step=step)
+    rev = lambda m, c, s=sigma: revalue(m, c, trades, base, t, n, seed, credit, csa, a, s)
     shocks = {f"delta {p:g}Y": triangle(k) for k, p in enumerate(PILLARS)}
     shocks["delta parallel"] = np.ones_like
     out = {name: _central(rev(rate_shock(market, f, h), quotes), rev(rate_shock(market, f, -h), quotes))
            for name, f in shocks.items()}
     vol = lambda s: [(T, m, v * (1 + s)) for T, m, v in quotes]
-    out["vega +1%"] = _central(rev(market, vol(dvol)), rev(market, vol(-dvol)))
+    bumped = (lambda x: sigma * (1 + x)) if sigma else (lambda x: None)
+    out["vega +1%"] = _central(rev(market, vol(dvol), bumped(dvol)), rev(market, vol(-dvol), bumped(-dvol)))
     return out
 
 
@@ -81,31 +83,35 @@ def duration_factor(S: float, E: float) -> float:
 
 
 def sa_ccr(trades, V0: float, csa: dict | None = None) -> dict:
-    """SA-CCR EAD of a netting set of EUR swaps (a single hedging set). csa: {H_C, H_B, MTA, mpor_days}.
+    """SA-CCR EAD of a netting set of EUR swaps (a single hedging set). csa: {H_C, H_B, MTA, mpor_days, optional IA}.
 
     δ = +1 for a fixed payer (gains when rates rise); maturity buckets < 1, 1-5, > 5 years.
+    A seasoned trade counts from today (S = 0); IA is the net independent collateral amount (NICA).
     """
+    ia = (csa or {}).get("IA", 0.0)
+
     def addon(mf):
         D = np.zeros(3)
         for tr in trades:
             b = 0 if tr.maturity < 1 else (1 if tr.maturity <= 5 else 2)
-            D[b] += tr.side * tr.nominal * duration_factor(tr.start, tr.maturity) * mf(tr)
+            D[b] += tr.side * tr.nominal * duration_factor(max(tr.start, 0.0), tr.maturity) * mf(tr)
         en = np.sqrt(D @ D + 1.4 * D[0] * D[1] + 1.4 * D[1] * D[2] + 0.6 * D[0] * D[2])
         return D, SF_IR * en
 
     def ead(rc, C, a):
-        mult = min(1.0, FLOOR + (1 - FLOOR) * np.exp((V0 - C) / (2 * (1 - FLOOR) * a)))
+        # a = 0 with a zero margin period of risk: no add-on for the multiplier to scale
+        mult = min(1.0, FLOOR + (1 - FLOOR) * np.exp((V0 - C) / (2 * (1 - FLOOR) * a))) if a > 0 else 1.0
         return ALPHA * (rc + mult * a), mult
 
     D, a = addon(lambda tr: np.sqrt(min(max(tr.maturity, 10 / 250), 1.0)))  # unmargined MF (CRE52.48)
-    e_nm, mult = ead(max(V0, 0.0), 0.0, a)
-    r = {"D": D, "add-on": a, "RC": max(V0, 0.0), "multiplier": mult, "EAD": e_nm, "unmargined EAD": e_nm}
+    e_nm, mult = ead(max(V0 - ia, 0.0), ia, a)
+    r = {"D": D, "add-on": a, "RC": max(V0 - ia, 0.0), "multiplier": mult, "EAD": e_nm, "unmargined EAD": e_nm}
     if csa is None:
         return r
     hc, hb = csa["H_C"] + csa["MTA"], csa["H_B"] + csa["MTA"]
-    C = max(V0 - hc, 0) - max(-V0 - hb, 0)  # variation margin held today, no initial margin
+    C = max(V0 - hc, 0) - max(-V0 - hb, 0) + ia  # variation margin held today plus NICA
     D, a = addon(lambda tr: 1.5 * np.sqrt(csa["mpor_days"] / 250))  # margined MF (CRE52.52)
-    rc = max(V0 - C, csa["H_C"] + csa["MTA"], 0.0)  # CRE52.18, NICA = 0
+    rc = max(V0 - C, csa["H_C"] + csa["MTA"] - ia, 0.0)  # CRE52.18
     e_m, mult = ead(rc, C, a)
     return r | {"D": D, "add-on": a, "RC": rc, "multiplier": mult, "EAD": min(e_m, e_nm)}  # cap CRE52.2
 

@@ -5,7 +5,7 @@ from scipy.stats import norm
 from xva.exposure import grid
 from xva.hw1f import HW1F, swap_coupons
 from xva.market import FlatCurve, Market, sample_market
-from xva.products import Trade, _beta, cube_mtm, index, swap, value
+from xva.products import Trade, _beta, cube_mtm, index, schedule, swap, value
 
 A, SIGMA = 0.03, 0.009
 MKT = sample_market()
@@ -109,3 +109,50 @@ def test_pfe_closed_form_quantile(cube):
         pfe = value([IRS], HW, MKT, u, xq, 1.0)[0, 0]
         share = np.mean(np.maximum(c[:, k, 0], 0) <= pfe)
         assert abs(share - 0.975) < 3 * np.sqrt(0.975 * 0.025 / n)
+
+
+SEASONED_K, SEASONED_L = 0.026, 0.031
+S_IRS = swap("S_IRS", "irs", 1, 1.0, SEASONED_K, -0.25, 5.0, last_fixing=SEASONED_L)
+S_OIS = swap("S_OIS", "ois", 1, 1.0, SEASONED_K, -0.25, 5.0, last_fixing=SEASONED_L)
+
+
+def test_schedule_merges_a_very_short_broken_period():
+    d = schedule(0.0, 10.008, 1)  # a calendar 10-year trade
+    assert len(d) == 10 and d[0] == pytest.approx(1.008)
+    assert len(schedule(0.0, 10.5, 1)) == 11  # a real stub stays
+    assert schedule(-0.25, 4.75, 2)[0] == pytest.approx(0.25)  # seasoned: next payment in 3 months
+
+
+def test_seasoned_closed_form_at_zero():
+    """Known running coupon, then the regular flows of a forward swap on the same dates."""
+    P = MKT.estr
+    annuity = np.sum(P(np.arange(5) + 0.75))
+    tail = v0([swap("F", "irs", 1, 1.0, 0.0, 0.25, 4.5)])[0]
+    assert v0([S_IRS])[0] == pytest.approx(SEASONED_L * 0.5 * P(0.25) + tail - SEASONED_K * annuity, abs=1e-12)
+    expected = 1 + 0.25 * SEASONED_L - P(4.75) - SEASONED_K * annuity  # accrued €STR compounds to the next date
+    assert v0([S_OIS])[0] == pytest.approx(expected, abs=1e-12)
+
+
+def test_seasoned_side_and_missing_fixing():
+    receiver = swap("R", "irs", -1, 1.0, SEASONED_K, -0.25, 5.0, last_fixing=SEASONED_L)
+    assert v0([receiver])[0] == pytest.approx(-v0([S_IRS])[0])
+    today = swap("T", "irs", 1, 1.0, SEASONED_K, -0.25, 5.0)
+    rate = (1 / MKT.euribor6m(0.5) - 1) / 0.5
+    assert v0([today])[0] - v0([S_IRS])[0] == pytest.approx((rate - SEASONED_L) * 0.5 * MKT.estr(0.25), abs=1e-12)
+
+
+def test_seasoned_martingale_before_and_after_the_first_flow():
+    trades = [S_IRS, S_OIS]
+    _, t = grid(trades, mpors=())
+    sim = HW.simulate(t, 40_000, seed=7)
+    c = cube_mtm(trades, HW, MKT, sim)
+    V0 = v0(trades)
+    k = 0  # before the first flow, at 0.25 and 0.75: nothing paid yet
+    assert t[k] < 0.25
+    for j in range(2):
+        dv = sim["D"][:, k] * c[:, k, j]
+        assert abs(dv.mean() - V0[j]) < 3 * dv.std() / np.sqrt(len(dv)) + 1e-12
+    k = int(np.searchsorted(t, 0.25 + 1e-9))  # the IRS has paid its known coupon
+    dv = sim["D"][:, k] * c[:, k, 0]
+    expected = V0[0] - SEASONED_L * 0.5 * MKT.estr(0.25)
+    assert abs(dv.mean() - expected) < 3 * dv.std() / np.sqrt(len(dv)) + 1e-12

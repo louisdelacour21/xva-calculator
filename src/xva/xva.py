@@ -63,7 +63,10 @@ def bootstrap(spreads: dict, P: Curve, R: float = 0.4, freq: int = 4) -> Surviva
         def f(l):
             lam[i] = l
             return cds_spread(Survival(pillars[: i + 1], lam[: i + 1].copy(), R), P, cds_schedule(T, freq)) - spreads[T]
-        lam[i] = brentq(f, 0.0, 5.0, xtol=1e-15)
+        try:
+            lam[i] = brentq(f, 0.0, 5.0, xtol=1e-15)
+        except ValueError:
+            raise ValueError(f"no default intensity reprices the {T:g}Y spread: curve too inverted, or above 500%") from None
     return Survival(pillars, lam, R, dict(spreads))
 
 
@@ -121,18 +124,20 @@ def adjustments(expo: dict, credit: Credit, V0: float) -> dict:
 
 
 def pre_trade(V_ns, V0_ns: float, new, model, market, sim, base, credit: Credit, csa=None) -> dict:
-    """ΔXVA of a new trade on the netting set, same paths: only the new trade's MtM is computed.
+    """ΔXVA of a new trade (or a list of them) on the netting set, same paths: only the new MtM is computed.
 
     V_ns: MtM of the netting set (paths × full grid), precomputed. The new trade must have its dates
     on the grid (otherwise recompute the grid and the netting set cube).
     """
     t0 = time.perf_counter()
-    V_new = cube_mtm([new], model, market, sim)[:, :, 0]
-    V0_new = float(value([new], model, market, 0.0, 0.0, 1.0)[0, 0])
+    new = new if isinstance(new, list) else [new]
+    V_new = cube_mtm(new, model, market, sim).sum(-1)
+    V0_new = float(value(new, model, market, 0.0, 0.0, 1.0)[0].sum())
     before = contributions(exposure(V_ns, sim["D"], sim["t"], base, V0_ns, csa), credit)
     after = contributions(exposure(V_ns + V_new, sim["D"], sim["t"], base, V0_ns + V0_new, csa), credit)
     d = {k: (float((after[k] - before[k]).mean()), std_error(after[k] - before[k])) for k in before}
-    return {"Δ": d, "V0": V0_new, "seconds": time.perf_counter() - t0}
+    total = sum((after[k] - before[k]) * s for k, s in {"CVA": 1, "DVA": -1, "FCA": 1, "FBA": -1}.items())
+    return {"Δ": d, "total": (float(total.mean()), std_error(total)), "V0": V0_new, "seconds": time.perf_counter() - t0}
 
 
 def allocation_euler(cube, D, t, base, V0, credit: Credit) -> np.ndarray:

@@ -87,3 +87,18 @@ def test_demo_portfolio():
                                                         "MTA": csa["MTA"], "mpor": mp})
     assert c.shape == (4_000, len(t), len(trades))
     assert np.all(with_["EE"] <= without["EE"] + 1e-6) and with_["EEPE"] < without["EEPE"]
+
+
+def test_independent_amount_held_lowers_exposure(state):
+    csa = {"H_C": 0.0, "H_B": 0.0, "MTA": 0.0, "mpor": MPOR_10D}
+    plain, held = expo(state, csa), expo(state, csa | {"IA": 0.1})
+    assert (held["EE"] <= plain["EE"] + 1e-12).all() and held["EE"].sum() < plain["EE"].sum()
+    assert (held["NEE"] >= plain["NEE"] - 1e-12).all()
+    assert expo(state, csa | {"IA": -0.1})["EE"].sum() > plain["EE"].sum()  # posted: exposed to its loss
+
+
+def test_pfe_level(state):
+    base, t, sim, c, V0 = state
+    low = exposure(c.sum(-1), sim["D"], t, base, V0.sum(), None, 0.9)
+    assert np.allclose(low["PFE"], np.quantile(low["E"], 0.9, axis=0))
+    assert (low["PFE"] <= expo(state)["PFE"] + 1e-12).all()

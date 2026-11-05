@@ -22,10 +22,11 @@ def grid(trades, mpors=(MPOR_10D,), step: float = 1 / 12):
     return base, full
 
 
-def exposure(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
+def exposure(V, D, t, base, V0: float, csa: dict | None = None, pfe_level: float = 0.975) -> dict:
     """Metrics on the base grid from V_NS (paths × full grid) and D(0, t).
 
-    csa: {H_C, H_B, MTA, mpor (years)} in notional units; None = uncollateralised.
+    csa: {H_C, H_B, MTA, mpor (years), optional IA} in notional units; None = uncollateralised.
+    IA: independent amount held by the bank (< 0 if posted), treated as unsegregated cash.
     EE, NEE, PFE undiscounted; EE* = E[D·E], NEE* = E[D·N] with their standard errors.
     """
     k = np.array([index(t, u) for u in base])
@@ -38,7 +39,8 @@ def exposure(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
                         for u in base]).T
         hc, hb = csa["H_C"] + csa["MTA"], csa["H_B"] + csa["MTA"]
         C = np.maximum(lag - hc, 0) - np.maximum(-lag - hb, 0)
-        C0 = max(V0 - hc, 0) - max(-V0 - hb, 0)
+        ia = csa.get("IA", 0.0)
+        C, C0 = C + ia, max(V0 - hc, 0) - max(-V0 - hb, 0) + ia
     E, N = np.maximum(Vb - C, 0), np.maximum(C - Vb, 0)
     n = len(V)
     ee = E.mean(0)
@@ -46,7 +48,7 @@ def exposure(V, D, t, base, V0: float, csa: dict | None = None) -> dict:
     one_year = base <= min(1.0, base[-1]) + 1e-12
     eee = np.maximum.accumulate(ee)
     return {
-        "t": base, "EE": ee, "NEE": N.mean(0), "PFE": np.quantile(E, 0.975, axis=0),
+        "t": base, "EE": ee, "NEE": N.mean(0), "PFE": np.quantile(E, pfe_level, axis=0),
         "EE*": (Db * E).mean(0), "SE_EE*": (Db * E).std(0) / np.sqrt(n),
         "NEE*": (Db * N).mean(0), "SE_NEE*": (Db * N).std(0) / np.sqrt(n),
         "EEPE": float(np.sum(eee[one_year] * dt[one_year]) / np.sum(dt[one_year])),

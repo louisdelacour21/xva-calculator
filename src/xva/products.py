@@ -4,7 +4,7 @@ Value of a trade = linear combination of P(t, T_k): at each date, a ZC matrix (p
 times a weight matrix (maturities × trades), plus the running floating coupon, fixed on the path.
 Convention: at date t, only cash flows paid strictly after t count (ex-coupon).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -21,9 +21,10 @@ class Trade:
     side: int            # +1 pays fixed, -1 receives fixed
     nominal: float
     K: float
-    start: float         # >= 0; shortcut: no seasoned trade (past fixings), to add with the project 09 fixings
+    start: float         # < 0 for a seasoned trade, already running today
     fixed: np.ndarray    # fixed payment dates (ACT/365F years)
     floating: np.ndarray  # floating payment dates
+    last_fixing: float | None = None  # seasoned: EURIBOR fixing (IRS) or annualised €STR accrued so far (OIS)
 
     @property
     def maturity(self) -> float:
@@ -36,12 +37,19 @@ class Trade:
         return np.unique(np.r_[self.fixed, self.floating])
 
 
-def swap(name, type, side, nominal, K, start, tenor) -> Trade:
-    """Regular schedules: annual fixed; semi-annual (IRS) or annual (OIS) floating."""
-    ff = 2 if type == "irs" else 1
-    return Trade(name, type, side, nominal, K, start,
-                 start + np.arange(1, round(tenor) + 1, dtype=float),
-                 start + np.arange(1, round(tenor * ff) + 1) / ff)
+def schedule(start: float, T: float, freq: int) -> np.ndarray:
+    """Payment dates rolled backward from maturity; the broken period comes first, merged if under 5% of a period
+    (a calendar 10-year trade is 10.008 ACT/365F years: no 3-day coupon).
+    shortcut: dates in ACT/365F years, no business-day calendar, take them from project 09 for real confirmations."""
+    n = max(int(np.ceil((T - start) * freq - 0.05)), 1)
+    return np.round(T - np.arange(n)[::-1] / freq, 12)
+
+
+def swap(name, type, side, nominal, K, start, tenor, last_fixing=None) -> Trade:
+    """Annual fixed leg; semi-annual (IRS) or annual (OIS) floating leg. start < 0: seasoned trade."""
+    start, T = round(start, 12), round(start + tenor, 12)
+    return Trade(name, type, side, nominal, K, start, schedule(start, T, 1),
+                 schedule(start, T, 2 if type == "irs" else 1), last_fixing)
 
 
 def load_portfolio(path: Path):
@@ -88,6 +96,13 @@ def value(trades, model: HW1F, market: Market, t: float, x_t, D_t, state=None) -
     PU = model.P(t, mats[None, :], x_t[:, None]) if len(mats) else np.zeros((len(x_t), 0))
     V = PU @ W
     for j, s, e, b, w in running:
+        if s < 0:  # fixed before today: the coupon is known, nothing to read on the path
+            P = market.euribor6m if trades[j].type == "irs" else market.estr
+            L = trades[j].last_fixing
+            L = (1 / P(e - s) - 1) / (e - s) if L is None else L  # no fixing given: today's rate for that period
+            V[:, j] += w * ((e - s) * L * PU[:, col[e]] if trades[j].type == "irs"
+                            else (1 - s * L) / D_t - PU[:, col[e]])
+            continue
         x_s, D_s = state(s)
         if trades[j].type == "irs":
             # δ·L paid at e, L fixed at s on the path: 1 + δ·L = β / P(s, e)
@@ -97,6 +112,15 @@ def value(trades, model: HW1F, market: Market, t: float, x_t, D_t, state=None) -
             # (the project sheet writes e^{∫r}·P(t,T), which is wrong: caught by test_martingale_mtm)
             V[:, j] += w * (D_s / D_t - PU[:, col[e]])
     return V
+
+
+def par_rate(trade: Trade, model: HW1F, market: Market) -> tuple[float, float]:
+    """(par fixed rate, annuity on the remaining fixed dates) seen from 0."""
+    unit = replace(trade, side=1, nominal=1.0, K=0.0)
+    d = np.diff(np.r_[trade.start, trade.fixed])
+    live = trade.fixed > 0
+    annuity = float(np.sum(d[live] * market.estr(trade.fixed[live])))
+    return float(value([unit], model, market, 0.0, 0.0, 1.0)[0, 0]) / annuity, annuity
 
 
 def cube_mtm(trades, model: HW1F, market: Market, sim: dict) -> np.ndarray:

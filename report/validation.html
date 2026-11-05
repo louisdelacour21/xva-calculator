@@ -80,7 +80,7 @@ sum of Euler allocations = CVA; pre-trade = full recompute; bank CVA = counterpa
 
 <h2>5. P measure against Q and unobservable parameters</h2>
 <figure>
-  <img src="figures/etude_pq.png" alt="CVA changes by measure, vols, mean reversion and spreads">
+  <img src="figures/pq_study.png" alt="CVA changes by measure, vols, mean reversion and spreads">
   <figcaption>Same draws, 10,000 paths. Historical σ (ECB, one year): CVA −23.5%. Mean reversion weighs ±0.5% once σ is recalibrated.</figcaption>
 </figure>
 <p>A CVA computed under P would be a quarter lower: the implied vol premium weighs as much as a 25% shock to spreads.
@@ -129,7 +129,7 @@ Steepener: with a single factor, 2-year and 10-year rates move together; the mod
 
 <h2>Appendix: demo</h2>
 <figure>
-  <img src="figures/app_profils.png" alt="App screenshot: EE and PFE profiles with and without CSA, Euler allocation">
+  <img src="figures/app_profiles.png" alt="App screenshot: EE and PFE profiles with and without CSA, Euler allocation">
   <figcaption>Streamlit app: EE and PFE profiles with and without CSA, Euler allocation of CVA, proxies shown with their impact.</figcaption>
 </figure>
 <p>Reproduce: <code>pip install -e .[test,rapport]</code>, <code>pytest</code>, <code>python -m xva.rapport</code>, <code>streamlit run app.py</code>.</p>

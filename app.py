@@ -1,14 +1,24 @@
 """Demo: XVA of the demo netting set and cost of a new swap (pre-trade), same paths.
 
   streamlit run app.py"""
-import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+SRC = str(Path(__file__).parent / "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
+# Streamlit Cloud pulls new commits without restarting Python: drop the engine if its files changed,
+# otherwise the new app.py runs against the old modules still in memory (ImportError after a rename)
+stamp = max(f.stat().st_mtime_ns for f in Path(SRC, "xva").glob("*.py"))
+if getattr(sys.modules.get("xva"), "stamp", None) != stamp:
+    for name in [m for m in sys.modules if m.split(".")[0] == "xva"]:
+        del sys.modules[name]
+    import xva
+    xva.stamp = stamp
 from xva.demo import PORTFOLIO  # noqa: E402
 from xva.exposure import exposure, grid  # noqa: E402
 from xva.hw1f import calibrate_q, swap_rate  # noqa: E402

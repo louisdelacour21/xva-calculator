@@ -5,7 +5,7 @@ from xva.exposure import exposure, grid
 from xva.hw1f import HW1F
 from xva.market import sample_market, swaption_vols
 from xva.products import cube_mtm, swap
-from xva.risk import PILLARS, ba_cva_reduced, cs01, duration_factor, sa_ccr, scva, sensitivities, triangle
+from xva.risk import PILLARS, ba_cva_reduced, capital_profile, cs01, duration_factor, sa_ccr, scva, sensitivities, triangle
 from xva.xva import load_credit
 
 MKT = sample_market()
@@ -98,3 +98,11 @@ def test_sa_ccr_independent_amount_is_nica():
 def test_sa_ccr_seasoned_trade_counts_from_today():
     assert sa_ccr([swap("A", "irs", 1, 10e6, 0.025, -3.0, 8)], 0.0)["add-on"] == pytest.approx(
         sa_ccr([swap("A", "irs", 1, 10e6, 0.025, 0.0, 5)], 0.0)["add-on"])
+
+
+def test_capital_profile_runs_off_with_the_trades():
+    tr = [swap("A", "irs", 1, 10e6, 0.025, 0.0, 5)]
+    K = capital_profile(tr, [1e5, 5e4, 0.0], None, 0.03, 1.0, np.array([0.0, 2.5, 5.0]))
+    ead = sa_ccr(tr, 1e5)["EAD"]
+    assert K[0] == pytest.approx(0.08 * ead + ba_cva_reduced([scva(0.03, [(5.0, ead)])]))
+    assert K[1] < K[0] and K[2] == 0

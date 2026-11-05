@@ -102,3 +102,12 @@ def test_pfe_level(state):
     low = exposure(c.sum(-1), sim["D"], t, base, V0.sum(), None, 0.9)
     assert np.allclose(low["PFE"], np.quantile(low["E"], 0.9, axis=0))
     assert (low["PFE"] <= expo(state)["PFE"] + 1e-12).all()
+
+
+def test_initial_margin_reduces_both_exposures(state):
+    base, t, sim, c, V0 = state
+    run = lambda im: exposure(c.sum(-1), sim["D"], t, base, V0.sum(), None, im=im)
+    none, zero, held = run(None), run(np.zeros(len(base))), run(np.full(len(base), 0.05))
+    assert np.array_equal(none["EE"], zero["EE"]) and np.array_equal(none["NEE"], zero["NEE"])
+    assert held["EE"].sum() < none["EE"].sum() and held["NEE"].sum() < none["NEE"].sum()
+    assert held["E0"] == max(V0.sum() - 0.05, 0.0) and held["N0"] == max(-V0.sum() - 0.05, 0.0)

@@ -5,6 +5,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
+from xva.initial_margin import SOURCE_OWN, SOURCE_USER, load_params
 from xva.inputs import (InputError, _number, _years, build_config, default_settings, default_tables, excel, load_files,
                         parse_stress, preset_curves, tidy, workbook)
 
@@ -201,3 +202,64 @@ def test_curve_presets_are_valid(preset):
     _, table = preset_curves(preset)
     cfg = build_config(default_tables() | {"curves": table}, SETTINGS)
     assert len(cfg["curves"]["tenors"]) > 3 and all(0 < t < 60 for t in cfg["curves"]["tenors"])
+
+
+def with_positions(*rows):
+    return default_tables() | {"positions": pd.DataFrame(rows)}
+
+
+@pytest.mark.parametrize("row, message", [
+    ({"name": "X"}, "give a notional or a DV01"),
+    ({"name": "X", "dv01": -5}, "dv01: must be positive"),
+    ({"name": "X", "notional": -5}, "notional: must be positive"),
+    ({"name": "X", "notional": 1e6, "maturity": -1}, "already matured"),
+    ({"name": "X", "notional": 1e6, "maturity": 90}, "beyond 60 years"),
+    ({"name": "X", "notional": 1e6, "maturity": "soon"}, "neither a number of years nor a date"),
+])
+def test_positions_refused(row, message):
+    assert any(message in e for e in problems(with_positions(row)))
+
+
+def test_positions_are_read():
+    cfg = build_config(with_positions({"name": "A", "side": "receiver", "pv01": "1 500", "maturity": "2031-01-15"},
+                                      {"notional": 1e6}), SETTINGS)
+    a, b = cfg["positions"]
+    assert (a["side"], a["dv01"], a["notional"]) == (-1, 1500.0, None) and a["maturity"] == pytest.approx(5.0, abs=0.01)
+    assert b["name"].startswith("position") and (b["side"], b["notional"], b["maturity"]) == (None, 1e6, None)
+
+
+def test_positions_follow_the_netting_set():
+    tables = with_trades(TRADE | {"netting_set": "N1"}, TRADE | {"name": "B", "netting_set": "N2"},
+                         positions=pd.DataFrame([{"name": "in N1", "notional": 1e6, "netting_set": "N1"},
+                                                 {"name": "in N2", "notional": 1e6, "netting_set": "N2"},
+                                                 {"name": "blank", "notional": 1e6}]))
+    assert [q["name"] for q in build_config(tables, SETTINGS, "N1")["positions"]] == ["in N1", "blank"]
+
+
+def test_a_trades_file_with_a_dv01_column_stays_trades():
+    data = "name,type,side,notional,fixed_rate_pct,start,tenor,dv01\nA,IRS,payer,1000000,2.5,0,5,500\n"
+    assert set(load_files([("book.csv", data.encode())])[0]) == {"trades"}
+
+
+def test_a_positions_file_is_recognised():
+    assert set(load_files([("book.csv", b"name,dv01,maturity\nA,500,7\n")])[0]) == {"positions"}
+
+
+def test_im_params_source_label():
+    assert build_config(default_tables(), SETTINGS)["im"]["source"] == SOURCE_OWN
+    changed = load_params()
+    changed.loc[3, "risk_weight_bp"] = 99.0
+    assert build_config(default_tables() | {"im_params": changed}, SETTINGS)["im"]["source"] == SOURCE_USER
+
+
+def test_im_params_refused():
+    assert any("one row per vertex" in e for e in problems(default_tables() | {"im_params": load_params().iloc[:-1]}))
+    asymmetric = load_params()
+    asymmetric.loc[0, "rho_30y"] = 0.99
+    assert any("symmetric" in e for e in problems(default_tables() | {"im_params": asymmetric}))
+    indefinite = load_params()  # 2w, 1m and 3m move together in the calibration: uncorrelating two of them is impossible
+    indefinite.loc[0, "rho_1m"] = indefinite.loc[1, "rho_2w"] = 0.0
+    assert any("positive semi-definite" in e for e in problems(default_tables() | {"im_params": indefinite}))
+    above_one = load_params()
+    above_one.loc[0, "rho_1m"] = above_one.loc[1, "rho_2w"] = 1.5
+    assert problems(default_tables() | {"im_params": above_one})

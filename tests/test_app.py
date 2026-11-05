@@ -28,6 +28,23 @@ def test_first_load_runs_the_demo(app):
     assert metric(app, "Mark-to-market").endswith("M€")
 
 
+def test_initial_margin_page_and_full_stack(app):
+    assert metric(app, "Initial margin, central").endswith("M€")
+    assert metric(app, "KVA") and metric(app, "XVA including MVA and KVA")
+    assert any("not ISDA SIMM" in c.value for c in app.caption)
+    assert widget(app.number_input, "Hurdle rate for KVA (%)").value == 10.0
+
+
+def test_controls_baseline_and_log(app):
+    assert metric(app, "Controls passed") == "8 of 8"
+    assert app.session_state.run_log[-1]["run ID"] == metric(app, "Run ID")
+    widget(app.button, "Pin this run as baseline").click().run()
+    assert not app.exception and "baseline" in app.session_state
+    assert any("None: same inputs." in c.value for c in app.code)
+    widget(app.button, "Clear the baseline").click().run()
+    assert not app.exception and "baseline" not in app.session_state
+
+
 def test_inputs_are_typed_numbers_not_sliders(app):
     assert not app.slider
     assert widget(app.number_input, "Paths").value == 10_000

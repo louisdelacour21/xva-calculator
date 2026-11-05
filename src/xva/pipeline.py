@@ -1,23 +1,30 @@
 """One calculation from a checked configuration (inputs.build_config): plain numbers and tables, no engine object,
 so results can be cached by the app and exported.
 """
+import hashlib
+import json
 import os
 import time
 from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from .exposure import exposure, grid
 from .hw1f import HW1F, calibrate_q, hw_normal_vol
+from .initial_margin import backtest, data_levels, im_profile, ladder, synthetic_im
 from .inputs import InputError, excel
 from .market import Market, ZeroCurve
 from .products import cube_mtm, par_rate, swap, value
-from .risk import RW_MAR50, ba_cva_reduced, cs01, effective_maturity, rate_shock, sa_ccr, scva, sensitivities
-from .xva import Credit, adjustments, allocation_euler, bootstrap, contributions, pre_trade
+from .risk import RW_MAR50, ba_cva_reduced, capital_profile, cs01, effective_maturity, rate_shock, sa_ccr, scva, sensitivities
+from .validation import full_history, live_checks
+from .xva import Credit, adjustments, allocation_euler, bootstrap, contributions, kva, mva, pre_trade
 
 MAX_MB = float(os.environ.get("XVA_MAX_MB", 600))  # Streamlit Community Cloud gives about 1 GB per app
 ADJUSTMENTS = ("CVA", "DVA", "FCA", "FBA")
+IM_LABEL = "Synthetic SIMM-style initial margin, not ISDA SIMM®, no affiliation"
 
 
 def _market(cfg) -> Market:
@@ -119,6 +126,44 @@ def _trade_table(ctx, cube, sim, V, V0s, credit, cva) -> tuple[pd.DataFrame, flo
     return table, float(np.sum(alone) - np.sum(euler))
 
 
+def _margin(ctx, cfg, V, V0s, sim, credit, without) -> dict:
+    """Synthetic initial margin, the funding cost of posting it (MVA), and the XVA if it were held and posted both ways."""
+    market, trades, base, positions, p = ctx["market"], ctx["trades"], ctx["base"], cfg["positions"], cfg["im"]
+    im = synthetic_im(trades, positions, market, p)
+    profile = im_profile(trades, positions, market, p, base)
+    charge = {k: mva(profile[k].to_numpy(), im[k], base, credit, market.estr) for k in ("central", "low", "high")}
+    V0 = float(V0s.sum())
+    margined = adjustments(exposure(V, sim["D"], ctx["t"], base, V0, ctx["csa"], cfg["pfe_level"], im=profile["central"].to_numpy()), credit, V0)
+    rows = [{"adjustment": k, "without IM": without[k][0], "with IM (central)": margined[k][0]} for k in ADJUSTMENTS]
+    rows.append({"adjustment": "MVA", "without IM": 0.0, "with IM (central)": charge["central"]})
+    what_if = pd.DataFrame(rows)
+    sign = np.array([1, -1, 1, -1, 1])
+    what_if.loc[len(what_if)] = ["Total", sign @ what_if["without IM"], sign @ what_if["with IM (central)"]]
+    what_if["change"] = what_if["with IM (central)"] - what_if["without IM"]
+    return im | {"levels": data_levels(trades, market, p, V0s), "profile": profile, "mva": charge, "what-if": what_if,
+                 "backtest": backtest(ladder(trades, market), p, full_history()), "source": p["source"], "phi": p["phi"],
+                 "threshold": p["threshold"]}
+
+
+def run_id(cfg: dict) -> str:
+    """Same inputs (seed included), same ID."""
+    return hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def engine_hash() -> str:
+    """Of the engine's source files, so it also works where git is absent; line endings do not count."""
+    h = hashlib.sha256()
+    for f in sorted(Path(__file__).parent.glob("*.py")):
+        h.update(f.read_bytes().replace(b"\r\n", b"\n"))
+    return h.hexdigest()[:12]
+
+
+def _audit(cfg, r) -> dict:
+    return {"run ID": run_id(cfg), "engine": engine_hash(), "computed (UTC)": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "paths": cfg["paths"], "seed": cfg["seed"], "MtM": r["V0"], "Total XVA": r["xva"]["Total XVA"][0],
+            "XVA incl. MVA and KVA": full_stack(r), "seconds": round(r["seconds"], 1)}
+
+
 def run(cfg: dict) -> dict:
     t0 = time.perf_counter()
     ctx = _setup(cfg)
@@ -150,9 +195,16 @@ def run(cfg: dict) -> dict:
     M = effective_maturity(trades)
     rw = RW_MAR50[(cfg["sector"], cfg["quality"])]
     charge = scva(rw, [(M, ccr["EAD"])])
+    ba = ba_cva_reduced([charge])
+    ccr_capital = 0.08 * cfg["ccr_rw"] * ccr["EAD"]
     capital = {"Add-on": ccr["add-on"], "Replacement cost": ccr["RC"], "Multiplier": ccr["multiplier"], "EAD": ccr["EAD"],
-               "Unmargined EAD (cap)": ccr["unmargined EAD"], "Effective maturity (years)": M, "Risk weight": rw,
-               "SCVA": charge, "BA-CVA capital (reduced)": ba_cva_reduced([charge]), "Accounting CVA": xva["CVA"][0]}
+               "Unmargined EAD (cap)": ccr["unmargined EAD"], "Effective maturity (years)": M, "BA-CVA risk weight": rw,
+               "SCVA": charge, "BA-CVA capital (reduced)": ba, "CCR risk weight": cfg["ccr_rw"],
+               "CCR capital (8% × risk weight × EAD)": ccr_capital, "Total capital": ccr_capital + ba, "Accounting CVA": xva["CVA"][0]}
+    dates = np.linspace(0.0, base[-1], 25)
+    K = capital_profile(trades, np.interp(dates, np.r_[0.0, t], np.r_[V0, V.mean(0)]), csa, rw, cfg["ccr_rw"], dates)
+    run_off = pd.DataFrame({"Capital": K}, index=pd.Index(dates, name="years"))
+    margin = _margin(ctx, cfg, V, V0s, sim, credit, xva)
 
     checks = list(cfg["warnings"])
     cva, se = xva["CVA"]
@@ -160,13 +212,17 @@ def run(cfg: dict) -> dict:
         checks.append(f"CVA standard error at {se / cva:.1%} of the CVA, above 5%: raise the number of paths")
     if len(fit) and not cfg["sigma"] and np.abs(fit["error (bp)"]).max() > 5:
         checks.append(f"calibration misses a swaption by {np.abs(fit['error (bp)']).max():.1f} bp: one σ cannot fit these vols")
-    return {
+    validation = live_checks(trades, market, sim, V, credit, bare, float(table["Euler CVA"].sum()), fit, cfg["sigma"], xva["CVA"],
+                             cfg["im"]["rho"], margin["backtest"])
+    r = {
         "V0": V0, "xva": xva, "profiles": profiles, "EEPE": expo["EEPE"], "peak PFE": float(expo["PFE"].max()),
         "trades": table, "diversification": diversification, "pretrade": _pretrade(ctx, V, V0, sim, credit) if ctx["candidates"] else None,
         "cs01": cs, "capital": capital, "fit": fit, "sigma": model.sigma, "a": model.a, "checks": checks,
         "dates": len(t), "mb": ctx["mb"], "paths": cfg["paths"], "pfe_level": level, "csa": csa is not None,
-        "seconds": time.perf_counter() - t0,
+        "im": margin, "kva": {"value": kva(K, dates[1:], credit, market.estr, cfg["hurdle"]), "hurdle": cfg["hurdle"], "profile": run_off},
+        "validation": validation, "seconds": time.perf_counter() - t0,
     }
+    return r | {"audit": _audit(cfg, r)}
 
 
 def sensitivity_table(cfg: dict, n: int) -> pd.DataFrame:
@@ -210,15 +266,53 @@ def stress_table(cfg: dict, scenarios: list) -> pd.DataFrame:
     return df
 
 
-def results_workbook(r: dict, stress: pd.DataFrame | None = None, sens: pd.DataFrame | None = None) -> bytes:
+def full_stack(r: dict) -> float:
+    """Total XVA with the funding cost of the initial margin and the cost of capital."""
+    return r["xva"]["Total XVA"][0] + r["im"]["mva"]["central"] + r["kva"]["value"]
+
+
+def headline(r: dict) -> dict:
+    return ({"Mark-to-market": r["V0"]} | {k: v[0] for k, v in r["xva"].items()}
+            | {"MVA (central)": r["im"]["mva"]["central"], "KVA": r["kva"]["value"], "XVA including MVA and KVA": full_stack(r),
+               "Initial margin (central)": r["im"]["central"], "EEPE": r["EEPE"], "Peak PFE": r["peak PFE"], "Total capital": r["capital"]["Total capital"]})
+
+
+def baseline_table(base: dict, r: dict) -> pd.DataFrame:
+    df = pd.DataFrame({"baseline": headline(base), "current": headline(r)}).rename_axis("measure").reset_index()
+    df["change"] = (df["current"] - df["baseline"]).round(2) + 0.0  # + 0.0: no "-0" from a rounding error
+    df["change %"] = df["change"] / df["baseline"].abs().where(df["baseline"] != 0) * 100
+    return df
+
+
+def config_diff(a, b, path: str = "") -> list[str]:
+    """One line per input that differs, "path: old → new"."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return [line for k in sorted(a.keys() | b.keys()) if k != "warnings"
+                for line in config_diff(a.get(k), b.get(k), f"{path}.{k}" if path else k)]
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        return [line for i, (u, v) in enumerate(zip(a, b)) for line in config_diff(u, v, f"{path}[{i}]")]
+    size = lambda v: f"{len(v)} items" if isinstance(v, list) else v
+    return [] if a == b else [f"{path}: {size(a)} → {size(b)}"]
+
+
+def results_workbook(r: dict, stress: pd.DataFrame | None = None, sens: pd.DataFrame | None = None, log: list | None = None) -> bytes:
     """Everything the app shows, as an Excel file."""
     summary = [{"measure": "Mark-to-market", "value": r["V0"], "standard error": 0.0}]
     summary += [{"measure": k, "value": v, "standard error": e} for k, (v, e) in r["xva"].items()]
+    im = r["im"]
+    summary += [{"measure": "MVA (synthetic IM, central)", "value": im["mva"]["central"]}, {"measure": "KVA", "value": r["kva"]["value"]},
+                {"measure": "XVA including MVA and KVA", "value": full_stack(r)}]
     summary += [{"measure": "EEPE", "value": r["EEPE"]}, {"measure": f"Peak PFE {r['pfe_level']:.1%}", "value": r["peak PFE"]},
                 {"measure": "σ (Hull-White)", "value": r["sigma"]}, {"measure": "Mean reversion", "value": r["a"]},
                 {"measure": "Paths", "value": r["paths"]}]
+    margin = [("Label", IM_LABEL), ("Parameters", im["source"]), ("Central", im["central"]), ("Low", im["low"]), ("High", im["high"]),
+              ("MVA, central", im["mva"]["central"]), ("MVA, low", im["mva"]["low"]), ("MVA, high", im["mva"]["high"]),
+              ("Backtest exceedance, sample", im["backtest"]["sample"]), ("Backtest exceedance, full history", im["backtest"]["history"])]
     sheets = {"Summary": pd.DataFrame(summary), "Profiles": r["profiles"].reset_index(), "Trades": r["trades"],
               "Pre-trade": r["pretrade"], "CS01": r["cs01"], "Sensitivities": sens, "Stress": stress,
               "Capital": pd.DataFrame({"measure": list(r["capital"]), "value": [float(v) for v in r["capital"].values()]}),
-              "Model fit": r["fit"], "Checks": pd.DataFrame({"check": r["checks"]})}
+              "Initial margin": pd.DataFrame(margin, columns=["measure", "value"]), "IM ladder": im["ladder"], "IM positions": im["positions"],
+              "IM coverage": im["coverage"], "IM data levels": im["levels"], "IM what-if": im["what-if"], "IM profile": im["profile"].reset_index(),
+              "KVA profile": r["kva"]["profile"].reset_index(), "Model fit": r["fit"], "Checks": pd.DataFrame({"check": r["checks"]}),
+              "Controls": r["validation"], "Run log": pd.DataFrame(log or [r["audit"]])}
     return excel({k: v for k, v in sheets.items() if v is not None and len(v)})

@@ -1,7 +1,8 @@
-# XVA calculator: CVA, DVA, FVA of a netting set of EUR swaps
+# XVA calculator: CVA, DVA, FVA, MVA and KVA of a netting set of EUR swaps
 
 Vectorised Hull-White 1F Monte Carlo engine: collateralised exposure profiles, CVA/DVA/FVA,
-pre-trade incremental CVA and sensitivities, validated against QuantLib and the closed-form swaption price.
+synthetic initial margin that still works when trade data is missing, MVA and KVA, pre-trade incremental CVA,
+sensitivities, and eight controls recomputed on every run. Validated against QuantLib and the closed-form swaption price.
 
 ## Progress
 
@@ -16,6 +17,7 @@ pre-trade incremental CVA and sensitivities, validated against QuantLib and the 
 | 6 | PIT backtest, convergence, P/Q study | done |
 | 7 | Streamlit, GIF; report, README, LinkedIn | done |
 | 8 | Interactive app: typed inputs, CSV/Excel upload, editable trades and market data, capital and stress tabs | done |
+| 9 | Synthetic initial margin with a missing-data waterfall, MVA, KVA, run controls, baseline comparison, run log, one-page report; side navigation, night mode | done |
 
 ## Demo (`app.py`)
 
@@ -26,30 +28,34 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Type your inputs or upload a file, then press Run. Everything is computed live (about 15 s for 10,000 paths on a PC,
+Type your inputs or upload a file, then press Run. Everything is computed live (20 to 25 s for 10,000 paths on a PC,
 then cached). The inputs stay editable and a changed input never overwrites the results on screen until you press Run.
 
-| Tab | What it does |
+| Page | What it does |
 |---|---|
-| Results | Mark-to-market, total XVA, adjusted value; CVA, DVA, FCA, FBA with 95% intervals; EEPE, peak PFE, EE/NEE/PFE profile, data checks |
+| Results | Mark-to-market, total XVA, adjusted value; CVA, DVA, FCA, FBA with 95% intervals; XVA stack including MVA and KVA; EEPE, peak PFE, EE/NEE/PFE profile, data checks; comparison with a pinned baseline; Excel and one-page HTML exports |
 | Trades | Editable netting set (IRS or OIS, payer or receiver, forward-starting or seasoned, years or real dates); per trade: standalone CVA, Euler CVA, leave-one-out ΔCVA, netting benefit |
 | Market data | Editable curves with presets (flat, ECB AAA curve, project 09 bootstrapped curves), CDS spreads, recoveries, funding spread, swaption vols, mean reversion, σ override, fit table |
 | Pre-trade | Candidate trades compared on the paths already simulated: ΔCVA, ΔDVA, ΔFVA, ΔXVA, charge in bp, all-in rate |
 | Sensitivities | On demand: deltas per pillar and parallel, vega, with standard errors (common random numbers); CS01 per CDS pillar |
-| Capital | SA-CCR EAD, SCVA and reduced BA-CVA by sector and credit quality, next to the accounting CVA |
+| Initial margin | Synthetic margin with its low-to-high range, coverage by data level, what the same book gives at each level, margin over the life of the book, MVA, editable parameters |
+| Capital | SA-CCR EAD, SCVA and reduced BA-CVA by sector and credit quality, next to the accounting CVA; capital profile and KVA |
 | Stress | Editable scenarios (rates, vols, counterparty and bank spreads), full revaluation on the same draws |
+| Controls | Eight checks recomputed on this run, run ID, engine hash, run log of the session |
 | Method | File formats, model, proxies and limitations |
 
-The sidebar holds the CSA (thresholds, MTA, independent amount, margin period of risk, on/off) and the simulation
-(paths, seed, grid step, PFE level, valuation date).
+The left sidebar holds the page menu, Run, your files, the CSA (thresholds, MTA, independent amount, margin period of risk,
+on/off), the simulation (paths, seed, grid step, PFE level, valuation date) and the night mode button.
 
 ### Your own data
 
 **Template** gives the format, **My inputs** exports what is on screen, and the results export to Excel from the Results tab.
 
-- **Excel**: one sheet per table (`trades`, `candidates`, `curves`, `credit`, `vols`, `stress`, `settings`). Only the tables found are replaced, so a file with your trades alone is enough.
+- **Excel**: one sheet per table (`trades`, `candidates`, `curves`, `credit`, `vols`, `stress`, `positions`, `im_params`, `settings`). Only the tables found are replaced, so a file with your trades alone is enough.
 - **CSV**: one table per file, recognised by the file name or its columns. Semicolons, decimal commas and thousands separators are read, and common column names too (`nominal`, `strike`, `maturity_date`...).
 - **Trades**: `name, type, side, notional, fixed_rate_pct, start, tenor` or `maturity`. `start` and `maturity` are years from the valuation date or dates; a past start makes a seasoned trade, with `last_fixing_pct` for the running coupon. An optional `netting_set` column adds a selector.
+- **Positions with partial data**: `name, side, notional, maturity, dv01, netting_set`, for the initial margin only. Leave blank what you do not know. A file that replaces the trades without this table clears the demo positions, and says so.
+- **Margin parameters**: `vertex, risk_weight_bp, rho_2w ... rho_30y`.
 
 A bad file is refused as a whole, with the row and column of each problem, and the inputs stay as they were.
 Files are read in memory and never written to disk. The public demo runs on a shared free server: for a confidential
@@ -141,6 +147,47 @@ The CSA removes 32% of the CVA. Euler allocation (no CSA): IRS-01 394 k€, IRS-
 Pre-trade for a 50 M€ 10-year payer IRS at 2.60%: ΔCVA = 146.5 k€ (SE 0.9) without CSA, 28.0 k€ (SE 0.2) with CSA,
 in 1.4 to 1.6 s.
 
+## Synthetic initial margin, MVA, KVA (`src/xva/initial_margin.py`)
+
+**Synthetic SIMM-style initial margin, not ISDA SIMM®, no affiliation with ISDA.** It keeps the public functional form of a
+sensitivity-based margin (risk weights, tenor correlations, sub-curve correlation, concentration factor), delta only, one
+currency. The ISDA parameter tables are not in this repository: page 1 of the ISDA documents limits their use and
+distribution, so the parameters here are our own. `scripts/calibrate_im.py` writes them to `market/im_params.csv`
+from the public ECB AAA history. They are not tuned to match ISDA and this is not a regulatory margin. A user with their own
+licence can type official parameters in the `im_params` table.
+
+What is known of a position sets how it is margined:
+
+| Level | Known | Method |
+|---|---|---|
+| 1 | Full terms | Exact ladder of the trade, by revaluation |
+| 2 | DV01 | Unsigned ladder on the 6M curve, split linearly at maturity; without a maturity, on the vertex with the highest risk weight |
+| 3 | Notional and maturity | Same, with DV01 = notional × annuity × 1 bp |
+| 4 | Notional only | BCBS-IOSCO schedule (MGN20.16), worst bucket 4%, added without offset |
+
+A blank direction gives a range, because the margin K is a norm: central `√(k² + ΣK(uᵢ)²)`, the root mean square over
+independent signs; high `k + K(Σu)`; low `max(k − K(Σu), 0)`. The page also re-margines the trades of the book as if less were
+known about them, which prices the missing data on that book, and backtests the margin against 10-business-day ECB moves
+(the backtest shows the exposure of the ladder, not of a live portfolio).
+
+- MVA: the margin is aged along the life of the book on forward curves, then funded at the funding spread (`xva.mva`), with its own range.
+- KVA: capital profile `capital_profile` (SA-CCR and reduced BA-CVA on the mean future value), then `xva.kva` at the hurdle rate (10% by default).
+- **Total XVA stays CVA − DVA + FCA − FBA**; "XVA including MVA and KVA" is shown next to it. Pre-trade and stress do not cover MVA and KVA.
+
+Demo netting set, 10,000 paths: margin 8.37 M€ (7.89 to 8.83 M€), of which 80.7% on full terms; MVA 95.5 k€; KVA 999.2 k€;
+XVA including MVA and KVA 1,415.0 k€. Same trades margined on notional only: +143%, which is the cost of not knowing them.
+
+## Run controls and audit trail (`live_checks`, `src/xva/pipeline.py`, `src/xva/onepager.py`)
+
+Every run recomputes eight checks on its own numbers, on the Controls page and in the exports: discount factors against the
+curve, martingale of the MtM against the PV of later cash flows, CDS repricing, calibration error, Euler sum, CVA standard error,
+margin correlation matrix, margin backtest. A failed check shows a warning on Results.
+
+- Run ID: hash of the inputs, so the same inputs give the same ID whatever the date. Engine hash: hash of the code in `src/xva`.
+- Baseline: pin a run, change an input, press Run: every headline figure moves side by side with the list of inputs that differ.
+- Run log: the last 20 runs of the session, on the Controls page and in the Excel export. It lasts as long as the browser session.
+- One-page report: a self-contained HTML file with nothing fetched, to print to PDF on one A4 page.
+
 ## Sensitivities and capital (`src/xva/risk.py`)
 
 - Deltas: 1 bp bump to the zero rates of both curves, as triangles at the 1, 2, 5, 10, 30-year pillars
@@ -150,8 +197,8 @@ in 1.4 to 1.6 s.
 - SA-CCR rates (CRE52): one EUR hedging set, buckets < 1, 1-5, > 5 years, delta ±1, margined and unmargined MF,
   multiplier, margined EAD capped by the unmargined one.
 - Reduced BA-CVA (MAR50): `K = 0.65·√[(0.5·ΣSCVA)² + 0.75·ΣSCVA²]`. Approximations: effective maturity
-  = notional-weighted residual maturity (floor 1 year); RWs copied for a few sectors
-  (demo counterparty: IG industrials, 3%), to be checked against MAR50.16 before publication.
+  = notional-weighted residual maturity (floor 1 year); risk weights per sector and credit quality from MAR50
+  (demo counterparty: IG industrials, 3%).
 
 Demo netting set with CSA, 10,000 paths, € per +1 bp (standard error in brackets), 46 s for 14 revaluations:
 
@@ -226,7 +273,7 @@ pip install -e .[test]
 pytest
 ```
 
-112 tests, about 2 min:
+161 tests, about 2.5 min on a PC:
 - HW1F: martingale `E[D] = P(0, t)`, moments of `x` and `∫x`, forward ZC consistency, ZC option and
   Jamshidian swaption against QuantLib 1.44, Jamshidian against Monte Carlo in multi-curve, parity,
   Q and P calibrations recovering a known σ, project 09 adapter.
@@ -248,5 +295,8 @@ pytest
   refused with its row and column, seasoned trades and dates, curve presets, stress scenarios.
 - Pipeline: demo regression, adjusted value identity, Euler sum, memory guard, impossible credit curve, stress base
   = run on the same draws, results workbook.
+- Initial margin: each waterfall level by hand, range ordering, positive semi-definite correlations, parameter file against the calibration, schedule figures, MVA and KVA.
+- Controls: all pass on the demo and on seasoned and OIS trades, the martingale check fails on a deliberately wrong cube, run ID follows the
+  inputs and not the clock, baseline and input diff, report self-contained with user text escaped.
 - App (`streamlit.testing`): first load, typed numbers, a changed input waits for Run, CSA off, stress, sensitivities,
-  preset then reset. File upload needs a real browser, so it was tested by hand with Playwright (valid, refused and unknown files).
+  preset then reset, margin page, controls and baseline. File upload, night mode and the side menu need a real browser, so they were tested by hand with Playwright.

@@ -7,7 +7,8 @@ from openpyxl import load_workbook
 
 from xva import pipeline
 from xva.inputs import InputError, build_config, default_settings, default_tables, parse_stress
-from xva.pipeline import results_workbook, run, sensitivity_table, stress_table
+from xva.onepager import one_pager
+from xva.pipeline import baseline_table, config_diff, engine_hash, full_stack, results_workbook, run, run_id, sensitivity_table, stress_table
 
 SMALL = default_settings() | {"paths": 2000, "grid_step_months": 3}
 TRADE = {"name": "A", "type": "IRS", "side": "payer", "notional": 10e6, "fixed_rate_pct": 2.5, "start": "0", "tenor": 5}
@@ -117,3 +118,65 @@ def test_sensitivities_and_results_workbook():
     assert {"Summary", "Profiles", "Trades", "CS01", "Sensitivities", "Stress", "Capital", "Model fit"} <= set(book.sheetnames)
     assert "Pre-trade" not in book.sheetnames  # no candidate, no empty sheet
     assert book["Summary"]["A2"].value == "Mark-to-market" and book["Summary"]["B2"].value == pytest.approx(r["V0"])
+
+
+def test_mva_and_kva_stack_on_top_of_the_baselines(demo):
+    im, k = demo["im"], demo["kva"]
+    assert im["low"] <= im["central"] <= im["high"]
+    assert 0 < im["mva"]["low"] <= im["mva"]["central"] <= im["mva"]["high"]
+    w = im["what-if"].set_index("adjustment")
+    assert w.loc["CVA", "with IM (central)"] < w.loc["CVA", "without IM"]
+    assert w.loc["Total", "without IM"] == pytest.approx(demo["xva"]["Total XVA"][0])
+    sign = pd.Series({"CVA": 1, "DVA": -1, "FCA": 1, "FBA": -1, "MVA": 1})
+    assert w.loc["Total", "with IM (central)"] == pytest.approx((sign * w.loc[sign.index, "with IM (central)"]).sum())
+    assert k["value"] > 0 and k["profile"]["Capital"].iloc[0] == pytest.approx(demo["capital"]["Total capital"])
+    assert full_stack(demo) == pytest.approx(demo["xva"]["Total XVA"][0] + im["mva"]["central"] + k["value"])
+    assert {"Initial margin", "IM ladder", "IM what-if", "KVA profile"} <= set(load_workbook(io.BytesIO(results_workbook(demo))).sheetnames)
+
+
+def test_controls_pass_on_the_demo(demo):
+    v = demo["validation"]
+    assert len(v) == 8 and (v["status"] == "pass").all(), v.to_string()
+
+
+def test_controls_hold_on_seasoned_and_ois_trades():
+    book = [TRADE | {"name": "Seasoned", "start": "-1.25", "last_fixing_pct": 3.1}, TRADE | {"name": "OIS", "type": "OIS", "start": "-0.5", "last_fixing_pct": 2.2},
+            TRADE | {"name": "Plain OIS", "type": "OIS", "side": "receiver"}, TRADE | {"name": "Forward", "start": "2"}]
+    v = run(config(trades=book))["validation"].set_index("check")["status"]
+    assert v[v.index.str.startswith("Martingale")].item() == "pass"
+    assert v[v.index.str.startswith("Discount")].item() == "pass"
+
+
+def test_martingale_control_catches_a_wrong_cube(monkeypatch):
+    real = pipeline.cube_mtm
+    monkeypatch.setattr(pipeline, "cube_mtm", lambda *a: real(*a) * 1.02)
+    v = run(config())["validation"].set_index("check")["status"]
+    assert v[v.index.str.startswith("Martingale")].item() == "FAIL"
+
+
+def test_run_id_follows_the_inputs_and_not_the_clock(demo):
+    cfg = build_config(default_tables(), default_settings())
+    assert demo["audit"]["run ID"] == run_id(cfg) != run_id(cfg | {"seed": cfg["seed"] + 1})
+    assert demo["audit"]["engine"] == engine_hash()
+
+
+def test_config_diff_and_baseline(demo):
+    cfg = {"paths": 10, "warnings": ["x"], "curves": {"estr": [1.0, 2.0]}, "trades": [{"K": 1}]}
+    new = {"paths": 20, "warnings": [], "curves": {"estr": [1.0, 3.0]}, "trades": [{"K": 1}, {"K": 2}]}
+    assert config_diff(cfg, new) == ["curves.estr[1]: 2.0 → 3.0", "paths: 10 → 20", "trades: 1 items → 2 items"]
+    assert config_diff(cfg, cfg) == []
+    same = baseline_table(demo, demo)
+    assert (same["change"] == 0).all() and "XVA including MVA and KVA" in set(same["measure"])
+
+
+def test_workbook_has_controls_and_log(demo):
+    sheets = load_workbook(io.BytesIO(results_workbook(demo, log=[demo["audit"], demo["audit"]]))).sheetnames
+    assert {"Controls", "Run log"} <= set(sheets)
+
+
+def test_one_page_report_is_self_contained_and_escaped(demo):
+    cfg = build_config(default_tables(), default_settings())
+    html = one_pager(demo | {"checks": ["<script>alert(1)</script>"]}, cfg)
+    assert demo["audit"]["run ID"] in html and "<svg" in html and "not ISDA SIMM" in html
+    assert "<script" not in html and "&lt;script&gt;" in html
+    assert "http" not in html  # nothing is fetched when it is opened

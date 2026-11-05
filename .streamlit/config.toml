@@ -1,12 +1,26 @@
+# Two palettes: the sidebar button and the Settings menu switch between them, the first visit follows the system.
 [theme]
-base = "light"
+primaryColor = "#2a78d6"
+baseRadius = "small"
+
+[theme.light]
 primaryColor = "#2a78d6"
 backgroundColor = "#fcfcfb"
 secondaryBackgroundColor = "#f3f2ef"
 textColor = "#0b0b0b"
+
+[theme.dark]
+primaryColor = "#2a78d6"
+backgroundColor = "#101114"
+secondaryBackgroundColor = "#1a1c20"
+textColor = "#e8e6e1"
 
 [server]
 maxUploadSize = 10
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# the night-mode button posts to the app's own window: Streamlit checks the origin even there
+allowedOrigins = ["https://*.streamlit.app", "http://localhost:8532"]

@@ -4,6 +4,7 @@ CVA = (1-R_C) Σ EE*(t̄_i)·[S_C(t_{i-1}) - S_C(t_i)]·S_B(t_i)      DVA: symme
 FCA = Σ ℓ_i·EE*(t̄_i)·S_C·S_B·Δt_i   FBA = Σ ℓ_i·NEE*(t̄_i)·S_C·S_B·Δt_i,   ℓ = max(s_F - (1-R_B)·λ_B, 0)
 EE*(t̄_i) = mean of the two ends of the interval (trapezoid), on the base grid, with E(0) at t = 0.
 Adjusted value = V - CVA + DVA - FCA + FBA.
+MVA = Σ ℓ_i·S_C·S_B·Δt_i·P(0,t̄_i)·IM(t̄_i)   KVA = hurdle·Σ K(t̄_i)·P(0,t̄_i)·S_C·S_B·Δt_i, IM and K deterministic.
 """
 import time
 from dataclasses import dataclass
@@ -121,6 +122,19 @@ def adjustments(expo: dict, credit: Credit, V0: float) -> dict:
     c = contributions(expo, credit)
     total = V0 - c["CVA"] + c["DVA"] - c["FCA"] + c["FBA"]
     return {k: (float(v.mean()), std_error(v)) for k, v in {**c, "Adjusted value": total}.items()}
+
+
+def mva(im, im0: float, t, credit: Credit, P) -> float:
+    """Cost of funding the initial margin posted, IM(t) on the dates t and im0 today.
+    shortcut: the margin is assumed to earn the discount rate, upgrade with the rate paid by the custodian."""
+    u = np.r_[0.0, t]
+    return float(weights(t, credit)["FCA"] @ (P((u[:-1] + u[1:]) / 2) * (np.r_[im0, im[:-1]] + im) / 2))
+
+
+def kva(K, t, credit: Credit, P, hurdle: float) -> float:
+    """Cost of holding the capital K, given on 0 and on the dates t, at the hurdle rate."""
+    u = np.r_[0.0, t]
+    return float(hurdle * np.sum((K[:-1] + K[1:]) / 2 * P((u[:-1] + u[1:]) / 2) * credit.counterparty(t) * credit.bank(t) * np.diff(u)))
 
 
 def pre_trade(V_ns, V0_ns: float, new, model, market, sim, base, credit: Credit, csa=None) -> dict:

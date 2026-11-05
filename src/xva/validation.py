@@ -13,8 +13,8 @@ from scipy import stats
 from .exposure import exposure, grid
 from .hw1f import HW1F, calibrate_p, calibrate_q, swap_rate
 from .market import ROOT, Market
-from .products import cube_mtm, swap, value
-from .xva import Credit, bootstrap, contributions, std_error
+from .products import _beta, cube_mtm, swap, value
+from .xva import Credit, bootstrap, cds_schedule, cds_spread, contributions, std_error
 
 ECB_MATURITIES = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "15Y", "20Y", "30Y"]
 HORIZONS = {"1 month": 21, "3 months": 63, "1 year": 252}  # in business days of the history
@@ -136,3 +136,69 @@ def backtest_pit(hist: pd.DataFrame, horizons=HORIZONS, window: int = 252, a: fl
                          "p-value": stats.kstest(df[p], "uniform").pvalue,
                          "power (vol ×1.25)": power, "indicative": power < 0.5})
     return pits, pd.DataFrame(rows)
+
+
+# --- Controls on each run ---------------------------------------------------------------------------------------
+
+def forward_value(trades, market, u: float) -> float:
+    """PV today of the netting set's flows paid strictly after u: what E[D(u)·V(u)] must equal under any model."""
+    P, total = market.estr, 0.0
+    for tr in trades:
+        live = tr.fixed > u
+        pv = -tr.K * float(np.sum(np.diff(np.r_[tr.start, tr.fixed])[live] * P(tr.fixed[live])))
+        for s, e, b in zip(*tr.floating_periods(), _beta(tr, market)):
+            if e <= u:
+                continue
+            if s >= 0:  # a coupon fixing on the path has this value too: the fixing cancels under the expectation
+                pv += float(b * P(s) - P(e))
+                continue
+            curve = market.euribor6m if tr.type == "irs" else market.estr
+            L = (1 / curve(e - s) - 1) / (e - s) if tr.last_fixing is None else tr.last_fixing
+            pv += float((e - s) * L * P(e) if tr.type == "irs" else (1 - s * L) - P(e))
+        total += tr.side * tr.nominal * pv
+    return total
+
+
+def _worst_z(samples, expected) -> float:
+    """Largest |mean - expected| in standard errors, over the dates (columns); dates without any noise are skipped."""
+    worst = 0.0
+    for k in range(samples.shape[1]):
+        se = std_error(samples[:, k])
+        if se > 1e-9:
+            worst = max(worst, abs(samples[:, k].mean() - expected[k]) / se)
+    return worst
+
+
+def live_checks(trades, market, sim, V, credit, bare, euler: float, fit, sigma_given, cva: tuple, rho, im_backtest: dict) -> pd.DataFrame:
+    """Pass or fail on this run, not on a stored report. A failure is reported, never tuned away.
+    bare: the uncollateralised exposure; euler: sum of the Euler contributions."""
+    rows = []
+
+    def row(check, value, limit, ok):
+        rows.append({"check": check, "value": value, "limit": limit, "status": "n/a" if ok is None else "pass" if ok else "FAIL"})
+
+    t, D = sim["t"], sim["D"]
+    z = _worst_z(D, market.estr(t))
+    row("Discount factors: E[D(t)] against the curve", f"{z:.2f} SE", "4 SE", z <= 4)
+    z = _worst_z(D * V, [forward_value(trades, market, u) for u in t])
+    row("Martingale: E[D(t)·V(t)] against the PV of later flows", f"{z:.2f} SE", "4 SE", z <= 4)
+
+    miss = max(abs(cds_spread(s, market.estr, cds_schedule(T)) - q) for s in (credit.counterparty, credit.bank) for T, q in s.spreads.items()) * 1e4
+    row("CDS spreads reprice from the bootstrapped survival", f"{miss:.5f} bp", "0.01 bp", miss <= 0.01)
+
+    if len(fit) and not sigma_given:
+        miss = float(np.abs(fit["error (bp)"]).max())
+        row("Calibration: largest swaption vol error", f"{miss:.2f} bp", "5 bp", miss <= 5)
+    else:
+        row("Calibration: largest swaption vol error", "σ typed, no calibration", "5 bp", None)
+
+    miss = abs(euler - float(contributions(bare, credit)["CVA"].mean()))
+    row("Euler contributions sum to the uncollateralised CVA", f"{miss:,.4f} EUR", "0.01 EUR", miss <= 0.01)
+
+    value_, se = cva
+    row("CVA standard error against the CVA", f"{se / value_:.2%}" if value_ > 0 else "no CVA", "5%", se <= 0.05 * value_ if value_ > 0 else None)
+
+    low = float(np.linalg.eigvalsh(np.asarray(rho, dtype=float)).min())
+    row("Initial margin correlations: lowest eigenvalue", f"{low:.4f}", "above -0.001", low >= -1e-3)
+    row("Initial margin backtest: exceedances, calibration sample", f"{im_backtest['sample']:.2%}", "2%", im_backtest["sample"] <= 0.02)
+    return pd.DataFrame(rows)

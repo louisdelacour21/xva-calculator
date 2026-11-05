@@ -52,6 +52,12 @@ def swap(name, type, side, nominal, K, start, tenor, last_fixing=None) -> Trade:
                  schedule(start, T, 2 if type == "irs" else 1), last_fixing)
 
 
+def aged(trades, u: float) -> list:
+    """The trades seen from date u (years from today): dates shifted, matured ones dropped, coupon fixing forgotten."""
+    return [replace(tr, start=tr.start - u, fixed=tr.fixed - u, floating=tr.floating - u, last_fixing=None)
+            for tr in trades if tr.maturity > u]
+
+
 def load_portfolio(path: Path):
     """(trades, csa) from a YAML file; csa in euros and in business days of MPoR."""
     d = yaml.safe_load(Path(path).read_text(encoding="utf-8"))

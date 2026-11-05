@@ -13,6 +13,7 @@ import pandas as pd
 import yaml
 
 from .demo import PORTFOLIO
+from .initial_margin import LABELS, SOURCE_OWN, SOURCE_USER, load_params
 from .market import ROOT, ecb_latest, swaption_vols
 from .risk import RW_MAR50
 
@@ -24,8 +25,10 @@ SHEETS = {
     "credit": ["tenor", "counterparty_spread_bp", "bank_spread_bp"],
     "vols": ["expiry", "tenor", "vol_bp"],
     "stress": ["scenario", "rates_bp", "vol_mult", "counterparty_spread_mult", "bank_spread_mult"],
+    "positions": ["name", "side", "notional", "maturity", "dv01", "netting_set"],
+    "im_params": ["vertex", "risk_weight_bp"] + [f"rho_{v}" for v in LABELS],
 }
-TEXT = {"name", "type", "side", "start", "maturity", "netting_set", "scenario"}
+TEXT = {"name", "type", "side", "start", "maturity", "netting_set", "scenario", "vertex"}
 ALIASES = {
     "trade": "name", "id": "name", "trade_id": "name", "product": "type", "direction": "side", "nominal": "notional",
     "amount": "notional", "notional_eur": "notional", "k": "fixed_rate_pct", "strike": "fixed_rate_pct",
@@ -33,6 +36,7 @@ ALIASES = {
     "end": "maturity", "end_date": "maturity", "last_fixing": "last_fixing_pct", "estr": "estr_pct", "€str": "estr_pct",
     "euribor": "euribor6m_pct", "euribor6m": "euribor6m_pct", "euribor_6m": "euribor6m_pct",
     "counterparty_bp": "counterparty_spread_bp", "bank_bp": "bank_spread_bp", "vol": "vol_bp", "normal_vol_bp": "vol_bp",
+    "pv01": "dv01", "bpv": "dv01",
 }
 SIDES = {"payer": "payer", "pay": "payer", "p": "payer", "buy": "payer",
          "receiver": "receiver", "receive": "receiver", "rec": "receiver", "r": "receiver", "sell": "receiver"}
@@ -44,7 +48,8 @@ SETTINGS = {  # numeric settings: (low, high), both inclusive
     "independent_amount": (-1e13, 1e13), "mpor_days": (0, 250), "mean_reversion": (1e-4, 1),
     "sigma_override_pct": (0.01, 10), "counterparty_recovery_pct": (0, 99), "bank_recovery_pct": (0, 99),
     "funding_spread_bp": (0, 5000), "paths": (200, 200_000), "seed": (0, 2**31), "grid_step_months": (1, 12),
-    "pfe_level_pct": (50, 99.9),
+    "pfe_level_pct": (50, 99.9), "im_subcurve_corr": (0, 1), "im_threshold_meur_bp": (1e-3, 1e6), "hurdle_pct": (0, 100),
+    "ccr_risk_weight_pct": (0, 1250),
 }
 README = [
     "XVA calculator input workbook. Keep the sheet and column names; delete rows or add your own. Sheets you remove keep their current values in the app.",
@@ -57,6 +62,9 @@ README = [
     "credit: CDS par spreads in bp per tenor in years, for the counterparty and the bank.",
     "vols: ATM normal vols of swaptions in bp, expiry and tenor in years (whole years for the tenor).",
     "stress: scenarios, rates_bp = parallel shift, the others are multipliers (1 = unchanged).",
+    "positions: positions known only in part, for the initial margin only (never simulated). Each row needs a notional or a dv01 (euros per bp, positive).",
+    "   side blank = direction unknown, which gives a range. maturity: years or a date. netting_set blank = every netting set.",
+    "im_params: risk weights (bp) and tenor correlations of the synthetic initial margin. Our own calibration on ECB history, not ISDA parameters; a licensed user can paste theirs.",
     "settings: setting / value pairs. Amounts in euros, sigma_override_pct blank = calibrate to the vols sheet, valuation_date blank = today.",
 ]
 
@@ -133,7 +141,7 @@ def tidy(table: str, df: pd.DataFrame, errors: list, notes: list | None = None) 
         cells = []
         for i, v in enumerate(df[col]):
             try:
-                cells.append(_text(col, v) if col in TEXT else (np.nan if _blank(v) else _number(v, col == "notional")))
+                cells.append(_text(col, v) if col in TEXT else (np.nan if _blank(v) else _number(v, col in ("notional", "dv01"))))
             except ValueError as e:
                 errors.append(f"{table} row {i + 1}, {col}: {e if col in TEXT else repr(v) + ' is not a number'}")
                 cells.append(None if col in TEXT else np.nan)
@@ -161,6 +169,11 @@ def default_tables() -> dict:
                    for n, r, v, c, b in [("Rates +100 bp", 100, 1, 1, 1), ("Rates -100 bp", -100, 1, 1, 1),
                                          ("Vols +20%", 0, 1.2, 1, 1), ("Counterparty spreads x2", 0, 1, 2, 1),
                                          ("Combined downturn", -100, 1.2, 2, 2)]],
+        # one row per data level, so the demo shows the waterfall; initial margin only, XVA does not see them
+        "positions": [{"name": "Legacy payer, DV01 known", "side": "payer", "maturity": 7, "dv01": 15_000},
+                      {"name": "Broker swap, notional and maturity", "notional": 20e6, "maturity": 4},
+                      {"name": "Unknown ticket, notional only", "notional": 10e6}],
+        "im_params": load_params(),
     }
     return {k: tidy(k, pd.DataFrame(v), []) for k, v in tables.items()}
 
@@ -176,6 +189,7 @@ def default_settings() -> dict:
         "funding_spread_bp": float(s["bank"]["funding_bp"]), "sector": s["counterparty"]["sector"],
         "quality": s["counterparty"]["quality"], "paths": 10_000, "seed": 0, "grid_step_months": 1,
         "pfe_level_pct": 97.5, "valuation_date": None,
+        "im_subcurve_corr": 0.98, "im_threshold_meur_bp": 100.0, "hurdle_pct": 10.0, "ccr_risk_weight_pct": 100.0,
     }
 
 
@@ -194,12 +208,13 @@ def preset_curves(preset: str, basis_bp: float = 20.0) -> tuple[str, pd.DataFram
 
 def _kind(name: str, df: pd.DataFrame) -> str | None:
     low = Path(name).stem.lower()
-    for table in ["candidates", "trades", "curves", "credit", "vols", "stress", "settings"]:
+    for table in ["candidates", "trades", "curves", "credit", "vols", "stress", "settings", "positions", "im_params"]:
         if table in low:
             return table
     cols = {_column(c) for c in df.columns}
     for table, mark in [("settings", "setting"), ("stress", "scenario"), ("vols", "vol_bp"), ("curves", "estr_pct"),
-                        ("credit", "counterparty_spread_bp"), ("trades", "notional")]:
+                        ("credit", "counterparty_spread_bp"), ("im_params", "risk_weight_bp"), ("trades", "fixed_rate_pct"),
+                        ("positions", "dv01"), ("trades", "notional")]:
         if mark in cols:
             return table
     return None
@@ -423,6 +438,56 @@ def _required(table: str, col: str, rows: list, low: float, high: float, errors:
     return [r[col] for _, r in rows]
 
 
+def _positions(df: pd.DataFrame, today: date, errors: list) -> list:
+    """Positions known only in part, for the initial margin: each row needs a notional or a DV01."""
+    out = []
+    for i, r in _rows(df):
+        err = len(errors)
+        where = f"positions row {i}" + (f" ({r['name']})" if r["name"] else "")
+        if r["notional"] is None and r["dv01"] is None:
+            errors.append(f"{where}: give a notional or a DV01")
+        if r["notional"] is not None and not 0 < r["notional"] <= 1e13:
+            errors.append(f"{where}, notional: must be positive (the direction goes in side) and at most 1e13")
+        if r["dv01"] is not None and not 0 <= r["dv01"] <= 1e13:
+            errors.append(f"{where}, dv01: must be positive, in euros per bp (the direction goes in side)")
+        T = None
+        if r["maturity"] is not None:
+            try:
+                T = _years(r["maturity"], today)
+            except ValueError:
+                errors.append(f"{where}, maturity: {r['maturity']!r} is neither a number of years nor a date")
+            else:
+                if T <= 0:
+                    errors.append(f"{where}: already matured")
+                elif T > 60:
+                    errors.append(f"{where}: maturity beyond 60 years")
+        if len(errors) == err:
+            out.append({"name": r["name"] or f"position {i}", "side": {"payer": 1, "receiver": -1}.get(r["side"]),
+                        "notional": r["notional"], "dv01": r["dv01"], "maturity": T})
+    return out
+
+
+def _im_params(df: pd.DataFrame, s: dict, errors: list) -> dict | None:
+    """Parameters of the synthetic initial margin, labelled: our own calibration unless the table was changed."""
+    rows, err = _rows(df), len(errors)
+    if [str(r["vertex"]).lower() for _, r in rows] != LABELS:
+        errors.append(f"im_params: expected one row per vertex, in this order: {', '.join(LABELS)}")
+        return None
+    rw = _required("im_params", "risk_weight_bp", rows, 1e-6, 1e5, errors)
+    rho = [_required("im_params", f"rho_{v}", rows, 0, 1, errors) for v in LABELS]
+    if len(errors) > err:
+        return None
+    rw, rho = np.array(rw, dtype=float), np.array(rho, dtype=float)
+    if not np.allclose(rho, rho.T, atol=1e-6) or not np.allclose(np.diag(rho), 1.0):
+        errors.append("im_params: the correlations must be symmetric with ones on the diagonal")
+    elif np.linalg.eigvalsh(rho).min() < -1e-3:
+        errors.append("im_params: the correlation matrix is not positive semi-definite")
+    own = load_params()
+    same = np.allclose(rw, own["risk_weight_bp"]) and np.allclose(rho, own[[f"rho_{v}" for v in LABELS]].to_numpy())
+    return {"rw": rw.tolist(), "rho": rho.tolist(), "phi": s["im_subcurve_corr"], "threshold": s["im_threshold_meur_bp"] * 1e6,
+            "source": SOURCE_OWN if same else SOURCE_USER}
+
+
 def build_config(tables: dict, settings: dict, netting_set: str | None = None) -> dict:
     """One JSON-able configuration for pipeline.run, or InputError listing every problem at once."""
     errors, warnings = [], []
@@ -476,6 +541,12 @@ def build_config(tables: dict, settings: dict, netting_set: str | None = None) -
         if n is not None and n != round(n):
             errors.append(f"vols row {i}, tenor: whole years only")
 
+    df = t["positions"]
+    if netting_set is not None:
+        df = df[df["netting_set"].fillna(netting_set) == netting_set]
+    positions = _positions(df, today, errors)
+    im = _im_params(t["im_params"], s, errors)
+
     if errors:
         raise InputError(errors)
     days = int(s["mpor_days"])
@@ -491,7 +562,8 @@ def build_config(tables: dict, settings: dict, netting_set: str | None = None) -
         "a": s["mean_reversion"], "sigma": None if s["sigma_override_pct"] is None else s["sigma_override_pct"] / 100,
         "paths": int(s["paths"]) // 2 * 2, "seed": int(s["seed"]), "step": int(s["grid_step_months"]) / 12,
         "pfe_level": s["pfe_level_pct"] / 100, "sector": str(s["sector"]).lower(), "quality": str(s["quality"]).upper(),
-        "valuation_date": today.isoformat(), "warnings": warnings,
+        "valuation_date": today.isoformat(), "warnings": warnings, "positions": positions, "im": im,
+        "hurdle": s["hurdle_pct"] / 100, "ccr_rw": s["ccr_risk_weight_pct"] / 100,
     }
 
 

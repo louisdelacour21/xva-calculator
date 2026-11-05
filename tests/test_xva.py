@@ -6,7 +6,7 @@ from xva.hw1f import HW1F
 from xva.market import sample_market
 from xva.products import _beta, cube_mtm, index, swap, value
 from xva.xva import (Credit, Survival, adjustments, allocation_euler, bootstrap, cds_schedule, cds_spread,
-                     contributions, load_credit, pre_trade, risk_free, weights)
+                     contributions, kva, load_credit, mva, pre_trade, risk_free, weights)
 
 A, SIGMA = 0.03, 0.009
 MKT = sample_market()
@@ -127,3 +127,15 @@ def test_limit_cases(ns):
     flat = Survival(np.array([10.0]), np.array([0.01]))
     r = adjustments(expo, Credit(flat, flat, 0.6 * 0.01), V0.sum())
     assert abs(r["FCA"][0]) < 1e-15 and abs(r["FBA"][0]) < 1e-15 and r["CVA"][0] > 0  # ℓ zero up to rounding
+
+
+def test_mva_and_kva_by_hand():
+    # ℓ = 0.02 - 0.6·0.02 = 0.008, S_C·S_B = e^{-0.03 t}, two intervals of one year
+    flat = lambda lam: Survival(np.array([10.0]), np.array([lam]))
+    credit = Credit(flat(0.01), flat(0.02), 0.02)
+    t, P = np.array([1.0, 2.0]), MKT.estr
+    expected = 0.008 * 1e6 * (np.exp(-0.03) * P(0.5) + np.exp(-0.06) * P(1.5))
+    assert mva(np.full(2, 1e6), 1e6, t, credit, P) == pytest.approx(expected, rel=1e-6)
+    assert mva(np.full(2, 1e6), 1e6, t, Credit(flat(0.01), flat(0.02), 0.0), P) == 0  # ℓ floored at zero
+    expected = 0.1 * (2.5e6 * P(0.5) * np.exp(-0.03) + 1.5e6 * P(1.5) * np.exp(-0.06))
+    assert kva(np.array([3e6, 2e6, 1e6]), t, credit, P, 0.1) == pytest.approx(expected, rel=1e-6)

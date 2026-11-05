@@ -2,5 +2,5 @@ numpy
 pandas
 scipy
 pyyaml
-streamlit
+streamlit==1.66.1
 openpyxl

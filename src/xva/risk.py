@@ -9,7 +9,7 @@ import numpy as np
 from .exposure import exposure, grid
 from .hw1f import HW1F, calibrate_q
 from .market import Market
-from .products import cube_mtm, value
+from .products import aged, cube_mtm, value
 from .xva import Credit, bootstrap, contributions, std_error
 
 PILLARS = np.array([1.0, 2.0, 5.0, 10.0, 30.0])
@@ -20,11 +20,14 @@ def triangle(k: int, pillars=PILLARS):
     return lambda t: np.interp(t, pillars, np.eye(len(pillars))[k])
 
 
-def rate_shock(market: Market, shape, h: float) -> Market:
-    """Both curves bumped by h·shape(t) in continuous zero rate (rate bump, basis unchanged)."""
-    def f(P):
+def rate_shock(market: Market, shape, h: float, only: str | None = None) -> Market:
+    """Both curves bumped by h·shape(t) in continuous zero rate (rate bump, basis unchanged), or one with only="estr"
+    or only="euribor6m"."""
+    def f(P, name):
+        if only not in (None, name):
+            return P
         return lambda t: P(t) * np.exp(-h * shape(np.asarray(t, dtype=float)) * np.asarray(t, dtype=float))
-    return Market(f(market.estr), f(market.euribor6m))
+    return Market(f(market.estr, "estr"), f(market.euribor6m, "euribor6m"))
 
 
 def _rebootstrap(credit: Credit, P) -> Credit:
@@ -118,8 +121,7 @@ def sa_ccr(trades, V0: float, csa: dict | None = None) -> dict:
 
 # --- Reduced BA-CVA (MAR50) -------------------------------------------------------------------------------------
 
-# MAR50.16, table 1: (sector, IG or HY/NR) -> RW. shortcut: copied for the sectors used, to check again
-# against the text before publication.
+# MAR50.16, table 1: (sector, IG or HY/NR) -> RW, for the sectors offered in the app.
 RW_MAR50 = {("sovereign", "IG"): 0.005, ("sovereign", "HY"): 0.02, ("financial", "IG"): 0.05,
             ("financial", "HY"): 0.12, ("industrial", "IG"): 0.03, ("industrial", "HY"): 0.07,
             ("other", "IG"): 0.05, ("other", "HY"): 0.12}
@@ -139,3 +141,17 @@ def ba_cva_reduced(scvas, rho: float = 0.5, ds: float = 0.65) -> float:
     """K = DS · √[(ρ Σ SCVA)² + (1 - ρ²) Σ SCVA²] (MAR50.14); regulatory CVA excludes DVA."""
     s = np.asarray(scvas, dtype=float)
     return float(ds * np.sqrt((rho * s.sum()) ** 2 + (1 - rho**2) * np.sum(s**2)))
+
+
+def capital_profile(trades, mean_value, csa, rw, ccr_rw, dates) -> np.ndarray:
+    """Minimum capital (8% of CCR RWA + reduced BA-CVA) of the aged trades, at the mean netting-set value of each date.
+    shortcut: capital of the mean value, not the mean of the capital, upgrade by running SA-CCR on the paths."""
+    out = []
+    for u, v in zip(dates, mean_value):
+        alive = aged(trades, u)
+        if not alive:
+            out.append(0.0)
+            continue
+        ead = sa_ccr(alive, v, csa)["EAD"]
+        out.append(0.08 * ccr_rw * ead + ba_cva_reduced([scva(rw, [(effective_maturity(alive), ead)])]))
+    return np.array(out)

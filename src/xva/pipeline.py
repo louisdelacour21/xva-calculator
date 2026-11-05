@@ -279,7 +279,7 @@ def headline(r: dict) -> dict:
 
 def baseline_table(base: dict, r: dict) -> pd.DataFrame:
     df = pd.DataFrame({"baseline": headline(base), "current": headline(r)}).rename_axis("measure").reset_index()
-    df["change"] = (df["current"] - df["baseline"]).round(2) + 0.0  # + 0.0: no "-0" from a rounding error
+    df["change"] = (df["current"] - df["baseline"]).round(0) + 0.0  # whole euros as shown; + 0.0: no "-0" from a few cents of noise
     df["change %"] = df["change"] / df["baseline"].abs().where(df["baseline"] != 0) * 100
     return df
 

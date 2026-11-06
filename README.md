@@ -1,5 +1,9 @@
 # XVA calculator: CVA, DVA, FVA, MVA and KVA of a netting set of EUR swaps
 
+[![Exposure paths from the engine, with EE and PFE](report/figures/exposure_fan.gif)](https://louisdelacour21.github.io/xva-calculator/)
+
+**[Live page](https://louisdelacour21.github.io/xva-calculator/)**: the engine runs in your browser, nothing to install (first load ~1 min). The animation shows 120 of the 10,000 simulated paths. **[Full app](https://xva-calculator-dwrrvgykssdappmhxqokdqu.streamlit.app/)**: adds file upload, capital and stress.
+
 Vectorised Hull-White 1F Monte Carlo engine: collateralised exposure profiles, CVA/DVA/FVA,
 synthetic initial margin that still works when trade data is missing, MVA and KVA, pre-trade incremental CVA,
 sensitivities, and eight controls recomputed on every run. Validated against QuantLib and the closed-form swaption price.
